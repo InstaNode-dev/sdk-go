@@ -1,13 +1,13 @@
-# instant.dev Go SDK
+# instanode.dev Go SDK
 
 Zero-friction developer infrastructure in a single HTTP call.
 Provision real Postgres databases, Redis caches, MongoDB databases,
 and NATS queues — no account, no Docker, no setup.
 
-**[https://instant.dev](https://instant.dev)**
+**[https://instanode.dev](https://instanode.dev)**
 
 ```
-go get instant.dev/sdk/go
+go get instanode.dev/sdk/go
 ```
 
 Zero external dependencies. Requires Go 1.22+.
@@ -26,7 +26,7 @@ import (
     "fmt"
     "log"
 
-    "instant.dev/sdk/go/instant"
+    "instanode.dev/sdk/go/instant"
 )
 
 func main() {
@@ -135,7 +135,7 @@ Convert anonymous resources into permanent ones by claiming them with an email a
 The upgrade URL is embedded in every provision response's `Note` field:
 
 ```
-Works now. Free forever with a free account: https://instant.dev/start?t=<jwt>
+Works now. Free forever with a free account: https://instanode.dev/start?t=<jwt>
 ```
 
 Extract the `t` query parameter and call `Claim`:
@@ -147,7 +147,7 @@ result, err := client.Claim(ctx, instant.ClaimOpts{
     TeamName: "Acme Corp",      // optional
 })
 if instant.IsConflict(err) {
-    fmt.Println("already claimed — log in at https://instant.dev")
+    fmt.Println("already claimed — log in at https://instanode.dev")
     return
 }
 if err != nil {
@@ -164,7 +164,7 @@ fmt.Println("team_id:", result.TeamID)
 // All options (all are optional)
 client := instant.New(
     instant.WithAPIKey("inst_live_..."),           // default: INSTANT_API_KEY env var
-    instant.WithBaseURL("http://localhost:30080"),  // default: INSTANT_API_URL or https://instant.dev
+    instant.WithBaseURL("http://localhost:30080"),  // default: INSTANT_API_URL or https://instanode.dev
     instant.WithTimeout(15 * time.Second),         // default: 30s
     instant.WithHTTPClient(myClient),              // custom transport (tracing, TLS, etc.)
     instant.WithLogger(slog.Default()),            // advisory notices and upgrade prompts
@@ -238,7 +238,7 @@ go run ./examples/agent-bootstrap
 
 ## Local development
 
-Point the client at your local instant.dev cluster:
+Point the client at your local instanode.dev cluster:
 
 ```bash
 export INSTANT_API_URL=http://localhost:30080
@@ -265,7 +265,7 @@ Tests use `httptest.NewServer` — no network access required.
 
 ## Links
 
-- Website: [https://instant.dev](https://instant.dev)
-- Dashboard: [https://instant.dev/dashboard](https://instant.dev/dashboard)
-- Upgrade / pricing: [https://instant.dev/pricing](https://instant.dev/pricing)
-- Claim anonymous resources: [https://instant.dev/start](https://instant.dev/start)
+- Website: [https://instanode.dev](https://instanode.dev)
+- Dashboard: [https://instanode.dev/dashboard](https://instanode.dev/dashboard)
+- Upgrade / pricing: [https://instanode.dev/pricing](https://instanode.dev/pricing)
+- Claim anonymous resources: [https://instanode.dev/start](https://instanode.dev/start)
