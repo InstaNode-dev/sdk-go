@@ -2,7 +2,8 @@
 
 Zero-friction developer infrastructure in a single HTTP call.
 Provision real Postgres databases, Redis caches, MongoDB databases,
-and NATS queues — no account, no Docker, no setup.
+NATS queues — and deploy the application that runs on top of them —
+no account, no Docker, no setup.
 
 **[https://instanode.dev](https://instanode.dev)**
 
@@ -56,6 +57,12 @@ func main() {
 | `ProvisionMongoDB` | `(ctx, *ProvisionOpts) (*ProvisionResult, error)` | MongoDB database + scoped user |
 | `ProvisionQueue` | `(ctx, *ProvisionOpts) (*ProvisionResult, error)` | NATS JetStream stream |
 
+### Deployment
+
+| Method | Signature | Description |
+|---|---|---|
+| `Deploy` | `(ctx, DeployOpts) (*Deployment, error)` | Build + deploy an app from a gzipped tarball (POST /deploy/new) |
+
 ### Resource Management (requires API key)
 
 | Method | Signature | Description |
@@ -100,6 +107,47 @@ q, err := client.ProvisionQueue(ctx, nil)
 
 Anonymous resources expire after **24 hours**. Claim them permanently with a free account
 (see [Claim](#claim) below or visit the URL in `result.Note`).
+
+---
+
+## Deploy
+
+Build and deploy an application from a gzipped tarball. The SDK uploads as
+`multipart/form-data` to `POST /deploy/new`, optionally with env vars set on the first
+build (avoiding the deploy → patch env → redeploy round-trip).
+
+```go
+f, _ := os.Open("build.tar.gz")
+defer f.Close()
+
+d, err := client.Deploy(ctx, instant.DeployOpts{
+    Tarball:        f,
+    Name:           "my-api",
+    Port:           8080,
+    Env:            "production",
+    EnvVars:        map[string]string{"DATABASE_URL": "vault://DATABASE_URL"},
+    IdempotencyKey: "first-deploy-build-7",
+})
+if err != nil { log.Fatal(err) }
+fmt.Println("deploy id:", d.ID, "status:", d.Status, "url:", d.URL)
+```
+
+`Deployment.Status` is one of `building`, `deploying`, `healthy`, `failed`, `stopped`.
+Poll the deploy by id via the live API to watch it reach a terminal state.
+
+### What's NOT covered yet
+
+This SDK currently exposes a focused slice of the platform surface. The full agent API
+documents ~90+ additional endpoints across deployments management (`GET /deploy/:id`,
+`PATCH /deploy/:id/env`, `POST /deploy/:id/redeploy`, `DELETE /deploy/:id`, logs SSE),
+multi-service stacks (`POST /stacks/new` and friends), billing (`POST /api/v1/billing/checkout`,
+`/api/v1/billing/usage`), team management, env-twin / promotion, vault, audit, webhook
+receivers, custom domains, GitHub App connections, and more.
+
+See the [full OpenAPI](https://api.instanode.dev/openapi.json) for the canonical list.
+
+A `go-instanode` v1.x will widen the surface; for now an `*http.Client` against the
+documented endpoints is the recommended path for anything not yet wrapped here.
 
 ---
 
@@ -164,7 +212,7 @@ fmt.Println("team_id:", result.TeamID)
 // All options (all are optional)
 client := instant.New(
     instant.WithAPIKey("inst_live_..."),           // default: INSTANT_API_KEY env var
-    instant.WithBaseURL("http://localhost:30080"),  // default: INSTANT_API_URL or https://instanode.dev
+    instant.WithBaseURL("http://localhost:30080"),  // default: INSTANT_API_URL or https://api.instanode.dev
     instant.WithTimeout(15 * time.Second),         // default: 30s
     instant.WithHTTPClient(myClient),              // custom transport (tracing, TLS, etc.)
     instant.WithLogger(slog.Default()),            // advisory notices and upgrade prompts
