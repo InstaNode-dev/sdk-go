@@ -1,6 +1,6 @@
-// Package instant is the official Go SDK for instant.dev.
+// Package instant is the official Go SDK for instanode.dev.
 //
-// instant.dev provisions real developer infrastructure — databases, caches,
+// instanode.dev provisions real developer infrastructure — databases, caches,
 // queues, document stores, and more — with a single HTTP call. No account required.
 // Anonymous resources work immediately; claim them with an email to make them permanent.
 //
@@ -37,14 +37,21 @@ import (
 )
 
 const (
-	// DefaultBaseURL is the production instant.dev API endpoint.
-	DefaultBaseURL = "https://instant.dev"
+	// DefaultBaseURL is the production instanode.dev API endpoint.
+	//
+	// Historical note: this used to be https://instant.dev, but that hostname
+	// was retired during the rebrand and now serves a parking page that
+	// returns 404 for every API path. SDK callers on the old default got a
+	// non-actionable "404 Not Found" with no path forward. The canonical
+	// production host is api.instanode.dev — fronts the same backend, valid
+	// TLS, full OpenAPI surface.
+	DefaultBaseURL = "https://api.instanode.dev"
 
 	// defaultTimeout is applied to every HTTP request.
 	defaultTimeout = 30 * time.Second
 
 	// sdkVersion is sent in the User-Agent header.
-	sdkVersion = "instant-go-sdk/0.1"
+	sdkVersion = "instant-go-sdk/0.2"
 )
 
 // Client is the instant.dev API client.
@@ -66,7 +73,7 @@ func WithAPIKey(key string) Option {
 	return func(c *Client) { c.apiKey = key }
 }
 
-// WithBaseURL overrides the default API base URL (https://instant.dev).
+// WithBaseURL overrides the default API base URL (https://api.instanode.dev).
 // Useful for pointing at a local development server:
 //
 //	client := instant.New(instant.WithBaseURL("http://localhost:30080"))
@@ -91,13 +98,13 @@ func WithLogger(l *slog.Logger) Option {
 	return func(c *Client) { c.logger = l }
 }
 
-// New creates an instant.dev Client.
+// New creates an instanode.dev Client.
 //
 // Configuration is resolved in order:
 //  1. Options passed to New
 //  2. INSTANT_API_KEY environment variable
 //  3. INSTANT_API_URL environment variable
-//  4. Built-in defaults (anonymous mode, https://instant.dev, 30 s timeout)
+//  4. Built-in defaults (anonymous mode, https://api.instanode.dev, 30 s timeout)
 func New(opts ...Option) *Client {
 	c := &Client{
 		baseURL:   DefaultBaseURL,
@@ -245,10 +252,10 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 // logHeaders surfaces advisory response headers to the configured logger.
 func (c *Client) logHeaders(resp *http.Response) {
 	if notice := resp.Header.Get("X-Instant-Notice"); notice != "" {
-		c.logger.Warn("instant.dev notice", "notice", notice)
+		c.logger.Warn("instanode.dev notice", "notice", notice)
 	}
 	if upgradeURL := resp.Header.Get("X-Instant-Upgrade"); upgradeURL != "" {
-		c.logger.Warn("instant.dev upgrade available", "url", upgradeURL)
+		c.logger.Warn("instanode.dev upgrade available", "url", upgradeURL)
 	}
 }
 
