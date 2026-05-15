@@ -46,7 +46,7 @@ func TestProvisionDatabase_Success(t *testing.T) {
 	})
 
 	client := serve(t, mux)
-	result, err := client.ProvisionDatabase(context.Background(), nil)
+	result, err := client.ProvisionDatabase(context.Background(), &instant.ProvisionOpts{Name: "test-db"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestProvisionDatabase_ServiceDisabled(t *testing.T) {
 	})
 
 	client := serve(t, mux)
-	_, err := client.ProvisionDatabase(context.Background(), nil)
+	_, err := client.ProvisionDatabase(context.Background(), &instant.ProvisionOpts{Name: "test-db"})
 	if !instant.IsServiceUnavailable(err) {
 		t.Errorf("expected IsServiceUnavailable, got: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestProvisionMongoDB_Success(t *testing.T) {
 	})
 
 	client := serve(t, mux)
-	result, err := client.ProvisionMongoDB(context.Background(), nil)
+	result, err := client.ProvisionMongoDB(context.Background(), &instant.ProvisionOpts{Name: "test-mongo"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,12 +163,108 @@ func TestProvisionQueue_Success(t *testing.T) {
 	})
 
 	client := serve(t, mux)
-	result, err := client.ProvisionQueue(context.Background(), nil)
+	result, err := client.ProvisionQueue(context.Background(), &instant.ProvisionOpts{Name: "test-queue"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Token != "q-tok" {
 		t.Errorf("Token = %q, want q-tok", result.Token)
+	}
+}
+
+// ─── Mandatory resource name ──────────────────────────────────────────────────
+
+// TestProvision_RequiresName verifies that every provision method rejects a
+// missing or invalid name client-side, before any network request is made.
+// The server enforces the same contract with an HTTP 400; the SDK fails fast.
+func TestProvision_RequiresName(t *testing.T) {
+	// A server that fails the test if it is ever reached — the SDK must
+	// reject the request before the network round-trip.
+	mux := http.NewServeMux()
+	hit := false
+	for _, path := range []string{"/db/new", "/cache/new", "/nosql/new", "/queue/new"} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
+		})
+	}
+	client := serve(t, mux)
+	ctx := context.Background()
+
+	provisioners := map[string]func(*instant.ProvisionOpts) error{
+		"ProvisionDatabase": func(o *instant.ProvisionOpts) error {
+			_, err := client.ProvisionDatabase(ctx, o)
+			return err
+		},
+		"ProvisionCache": func(o *instant.ProvisionOpts) error {
+			_, err := client.ProvisionCache(ctx, o)
+			return err
+		},
+		"ProvisionMongoDB": func(o *instant.ProvisionOpts) error {
+			_, err := client.ProvisionMongoDB(ctx, o)
+			return err
+		},
+		"ProvisionQueue": func(o *instant.ProvisionOpts) error {
+			_, err := client.ProvisionQueue(ctx, o)
+			return err
+		},
+	}
+
+	// nil opts, empty name, and names that violate the server regex
+	// (1-64 chars, ^[A-Za-z0-9][A-Za-z0-9 _-]*$) must all be rejected.
+	badOpts := []struct {
+		name string
+		opts *instant.ProvisionOpts
+	}{
+		{"nil opts", nil},
+		{"empty name", &instant.ProvisionOpts{Name: ""}},
+		{"leading hyphen", &instant.ProvisionOpts{Name: "-bad"}},
+		{"leading space", &instant.ProvisionOpts{Name: " bad"}},
+		{"illegal char", &instant.ProvisionOpts{Name: "bad/name"}},
+		{"too long", &instant.ProvisionOpts{Name: string(make([]byte, 65))}},
+	}
+
+	for method, fn := range provisioners {
+		for _, bad := range badOpts {
+			t.Run(method+"/"+bad.name, func(t *testing.T) {
+				hit = false
+				err := fn(bad.opts)
+				if err == nil {
+					t.Fatalf("%s with %s: expected error, got nil", method, bad.name)
+				}
+				if hit {
+					t.Errorf("%s with %s: SDK sent a network request; it must reject client-side", method, bad.name)
+				}
+			})
+		}
+	}
+}
+
+// TestProvision_AcceptsValidName verifies names that satisfy the server
+// contract pass client-side validation and reach the wire.
+func TestProvision_AcceptsValidName(t *testing.T) {
+	var gotName string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/db/new", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+		gotName = body["name"]
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"ok":             true,
+			"token":          "tok",
+			"connection_url": "postgres://u:p@h:5432/db",
+			"tier":           "anonymous",
+		})
+	})
+	client := serve(t, mux)
+
+	for _, valid := range []string{"app-db", "My App 1", "db_2", "A"} {
+		if _, err := client.ProvisionDatabase(context.Background(), &instant.ProvisionOpts{Name: valid}); err != nil {
+			t.Fatalf("ProvisionDatabase(%q): unexpected error: %v", valid, err)
+		}
+		if gotName != valid {
+			t.Errorf("server received name = %q, want %q", gotName, valid)
+		}
 	}
 }
 
@@ -493,7 +589,7 @@ func TestContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	_, err := client.ProvisionDatabase(ctx, nil)
+	_, err := client.ProvisionDatabase(ctx, &instant.ProvisionOpts{Name: "test-db"})
 	if err == nil {
 		t.Fatal("expected error on cancelled context")
 	}
@@ -525,7 +621,7 @@ func TestWithAPIKey_SetsAuthHeader(t *testing.T) {
 		instant.WithBaseURL(srv.URL),
 		instant.WithAPIKey("inst_live_mykey"),
 	)
-	_, err := client.ProvisionDatabase(context.Background(), nil)
+	_, err := client.ProvisionDatabase(context.Background(), &instant.ProvisionOpts{Name: "test-db"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

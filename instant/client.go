@@ -8,8 +8,8 @@
 //
 //	client := instant.New()
 //
-//	// Provision a Postgres database
-//	db, err := client.ProvisionDatabase(ctx, nil)
+//	// Provision a Postgres database — a name is required
+//	db, err := client.ProvisionDatabase(ctx, &instant.ProvisionOpts{Name: "app-db"})
 //	if err != nil { log.Fatal(err) }
 //	fmt.Println("postgres://...", db.ConnectionURL)
 //
@@ -44,7 +44,7 @@ const (
 	defaultTimeout = 30 * time.Second
 
 	// sdkVersion is sent in the User-Agent header.
-	sdkVersion = "instant-go-sdk/0.1"
+	sdkVersion = "instant-go-sdk/0.2"
 )
 
 // Client is the instant.dev API client.
