@@ -25,7 +25,7 @@ func ExampleClient_ProvisionCache() {
 	ctx := context.Background()
 	client := instant.New(instant.WithBaseURL("http://localhost:30080"))
 
-	cache, err := client.ProvisionCache(ctx, nil)
+	cache, err := client.ProvisionCache(ctx, &instant.ProvisionOpts{Name: "app-cache"})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func ExampleClient_ProvisionMongoDB() {
 	ctx := context.Background()
 	client := instant.New(instant.WithBaseURL("http://localhost:30080"))
 
-	mdb, err := client.ProvisionMongoDB(ctx, nil)
+	mdb, err := client.ProvisionMongoDB(ctx, &instant.ProvisionOpts{Name: "app-mongo"})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func ExampleClient_ProvisionQueue() {
 	ctx := context.Background()
 	client := instant.New(instant.WithBaseURL("http://localhost:30080"))
 
-	q, err := client.ProvisionQueue(ctx, nil)
+	q, err := client.ProvisionQueue(ctx, &instant.ProvisionOpts{Name: "app-queue"})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -97,9 +97,9 @@ func ExampleClient_ClaimTokens() {
 	ctx := context.Background()
 	client := instant.New(instant.WithBaseURL("http://localhost:30080"))
 
-	// Provision anonymously first
-	cache, _ := client.ProvisionCache(ctx, nil)
-	db, _ := client.ProvisionDatabase(ctx, nil)
+	// Provision anonymously first — a name is required
+	cache, _ := client.ProvisionCache(ctx, &instant.ProvisionOpts{Name: "app-cache"})
+	db, _ := client.ProvisionDatabase(ctx, &instant.ProvisionOpts{Name: "app-db"})
 
 	// Then associate both tokens with an existing authenticated account
 	result, err := client.ClaimTokens(ctx, "sk_live_your_key_here", []string{

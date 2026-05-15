@@ -15,18 +15,22 @@ import (
 // server uses key-namespace isolation instead of ACL isolation. In that case,
 // prefix all Redis keys with this value.
 //
+// opts is REQUIRED and opts.Name must be a valid resource name (1–64 chars,
+// matching ^[A-Za-z0-9][A-Za-z0-9 _-]*$). An invalid or missing name returns
+// an error before any network request is made.
+//
 // Example:
 //
-//	cache, err := client.ProvisionCache(ctx, nil)
+//	cache, err := client.ProvisionCache(ctx, &instant.ProvisionOpts{Name: "app-cache"})
 //	if err != nil { log.Fatal(err) }
 //	fmt.Println("redis URL:", cache.ConnectionURL)
 //
 //	// Connect with go-redis:
 //	rdb := redis.NewClient(&redis.Options{Addr: cache.ConnectionURL})
 func (c *Client) ProvisionCache(ctx context.Context, opts *ProvisionOpts) (*ProvisionResult, error) {
-	body := map[string]string{}
-	if opts != nil && opts.Name != "" {
-		body["name"] = opts.Name
+	body, err := provisionBody(opts)
+	if err != nil {
+		return nil, fmt.Errorf("ProvisionCache: %w", err)
 	}
 
 	var result ProvisionResult
