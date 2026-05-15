@@ -11,18 +11,22 @@ import (
 // Anonymous limits: 5 MB storage, 2 connections.
 // Hobby limits: 100 MB, 5 connections. Pro: 2 048 MB, 20 connections.
 //
+// opts is REQUIRED and opts.Name must be a valid resource name (1–64 chars,
+// matching ^[A-Za-z0-9][A-Za-z0-9 _-]*$). An invalid or missing name returns
+// an error before any network request is made.
+//
 // Example:
 //
-//	mdb, err := client.ProvisionMongoDB(ctx, nil)
+//	mdb, err := client.ProvisionMongoDB(ctx, &instant.ProvisionOpts{Name: "app-mongo"})
 //	if err != nil { log.Fatal(err) }
 //	fmt.Println("mongodb URL:", mdb.ConnectionURL)
 //
 //	// Connect with mongo-driver:
 //	client, err := mongo.Connect(ctx, options.Client().ApplyURI(mdb.ConnectionURL))
 func (c *Client) ProvisionMongoDB(ctx context.Context, opts *ProvisionOpts) (*ProvisionResult, error) {
-	body := map[string]string{}
-	if opts != nil && opts.Name != "" {
-		body["name"] = opts.Name
+	body, err := provisionBody(opts)
+	if err != nil {
+		return nil, fmt.Errorf("ProvisionMongoDB: %w", err)
 	}
 
 	var result ProvisionResult

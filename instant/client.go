@@ -8,8 +8,8 @@
 //
 //	client := instant.New()
 //
-//	// Provision a Postgres database
-//	db, err := client.ProvisionDatabase(ctx, nil)
+//	// Provision a Postgres database — a name is required
+//	db, err := client.ProvisionDatabase(ctx, &instant.ProvisionOpts{Name: "app-db"})
 //	if err != nil { log.Fatal(err) }
 //	fmt.Println("postgres://...", db.ConnectionURL)
 //

@@ -139,10 +139,19 @@ type RotateResult struct {
 	ConnectionURL string `json:"connection_url"`
 }
 
-// ProvisionOpts are the optional parameters shared by all provision methods.
+// ProvisionOpts are the parameters shared by all provision methods.
+//
+// Name is REQUIRED. Every provisioning endpoint rejects a request with a
+// missing or invalid name with an HTTP 400. Callers must pass a non-nil
+// *ProvisionOpts with a valid Name to every Provision* method.
 type ProvisionOpts struct {
-	// Name is a human-readable label stored with the resource (max 120 chars).
-	Name string `json:"name,omitempty"`
+	// Name is a human-readable label stored with the resource (REQUIRED).
+	//
+	// It must be 1–64 characters and match ^[A-Za-z0-9][A-Za-z0-9 _-]*$
+	// (start with a letter or digit; letters, digits, spaces, underscores,
+	// and hyphens thereafter). The SDK validates this client-side before
+	// sending the request.
+	Name string `json:"name"`
 }
 
 // ClaimOpts are the parameters for the Claim method.
