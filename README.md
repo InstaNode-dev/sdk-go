@@ -34,11 +34,12 @@ func main() {
     ctx := context.Background()
     client := instant.New() // anonymous; set INSTANT_API_KEY for permanent resources
 
-    db, err := client.ProvisionDatabase(ctx, nil)
+    // A resource name is required on every provision call.
+    db, err := client.ProvisionDatabase(ctx, &instant.ProvisionOpts{Name: "app-db"})
     if err != nil { log.Fatal(err) }
     fmt.Println("postgres:", db.ConnectionURL) // postgres://usr:pass@host:5432/db
 
-    cache, err := client.ProvisionCache(ctx, nil)
+    cache, err := client.ProvisionCache(ctx, &instant.ProvisionOpts{Name: "app-cache"})
     if err != nil { log.Fatal(err) }
     fmt.Println("redis:", cache.ConnectionURL) // redis://:pass@host:6379
 }
@@ -83,7 +84,10 @@ func main() {
 
 ## Provisioning
 
-All provision methods accept an optional `*ProvisionOpts` (pass `nil` for defaults).
+Every provision method requires a non-nil `*ProvisionOpts` with a valid `Name`.
+The name is a **required** resource label: 1–64 characters matching
+`^[A-Za-z0-9][A-Za-z0-9 _-]*$`. The SDK validates it client-side before the
+request; the server otherwise rejects a missing or invalid name with HTTP 400.
 
 ```go
 // Postgres
@@ -92,16 +96,16 @@ db, err := client.ProvisionDatabase(ctx, &instant.ProvisionOpts{Name: "app-db"})
 // db.Limits.StorageMB, db.Limits.Connections
 
 // Redis
-cache, err := client.ProvisionCache(ctx, nil)
+cache, err := client.ProvisionCache(ctx, &instant.ProvisionOpts{Name: "app-cache"})
 // cache.ConnectionURL → redis://:pass@host:6379
 // cache.KeyPrefix     → prefix all keys with this value (key-namespace isolation)
 
 // MongoDB
-mdb, err := client.ProvisionMongoDB(ctx, nil)
+mdb, err := client.ProvisionMongoDB(ctx, &instant.ProvisionOpts{Name: "app-mongo"})
 // mdb.ConnectionURL → mongodb://usr:pass@host:27017/db_<token>
 
 // NATS JetStream
-q, err := client.ProvisionQueue(ctx, nil)
+q, err := client.ProvisionQueue(ctx, &instant.ProvisionOpts{Name: "app-queue"})
 // q.ConnectionURL → nats://usr:pass@host:4222
 ```
 
@@ -212,7 +216,7 @@ fmt.Println("team_id:", result.TeamID)
 // All options (all are optional)
 client := instant.New(
     instant.WithAPIKey("inst_live_..."),           // default: INSTANT_API_KEY env var
-    instant.WithBaseURL("http://localhost:30080"),  // default: INSTANT_API_URL or https://api.instanode.dev
+    instant.WithBaseURL("http://localhost:8080"),   // default: INSTANT_API_URL or https://api.instanode.dev (port-forward svc/instant-api for local k8s)
     instant.WithTimeout(15 * time.Second),         // default: 30s
     instant.WithHTTPClient(myClient),              // custom transport (tracing, TLS, etc.)
     instant.WithLogger(slog.Default()),            // advisory notices and upgrade prompts
@@ -286,17 +290,19 @@ go run ./examples/agent-bootstrap
 
 ## Local development
 
-Point the client at your local instanode.dev cluster:
+Point the client at your local instanode.dev cluster (the in-cluster Service is ClusterIP,
+so port-forward `svc/instant-api` first):
 
 ```bash
-export INSTANT_API_URL=http://localhost:30080
+kubectl port-forward -n instant svc/instant-api 8080:8080 &
+export INSTANT_API_URL=http://localhost:8080
 go run ./examples/provision-all
 ```
 
 Or in code:
 
 ```go
-client := instant.New(instant.WithBaseURL("http://localhost:30080"))
+client := instant.New(instant.WithBaseURL("http://localhost:8080"))
 ```
 
 ---
