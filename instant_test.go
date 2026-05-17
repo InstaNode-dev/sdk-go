@@ -629,3 +629,133 @@ func TestWithAPIKey_SetsAuthHeader(t *testing.T) {
 		t.Errorf("Authorization = %q, want Bearer inst_live_mykey", gotAuth)
 	}
 }
+
+// ─── ProvisionStorage ─────────────────────────────────────────────────────────
+
+// TestProvisionStorage covers both response shapes the agent API returns from
+// POST /storage/new:
+//
+//   - the fresh-provision path — HTTP 201, full S3 credentials
+//     (endpoint, access_key_id, secret_access_key, prefix); and
+//   - the fingerprint-dedup path — HTTP 200, the 6th-call response that returns
+//     an already-provisioned resource. It echoes token + connection_url but
+//     OMITS the S3 credential fields (they are not reconstructable from the
+//     stored resource row).
+//
+// Regression: ProvisionStorage previously errored on the dedup path because it
+// checked result.Endpoint != "" as a success invariant. The dedup body has no
+// endpoint, so a perfectly valid 200 dedup response became a spurious error.
+// The fix mirrors ProvisionDatabase/Cache/MongoDB/Queue: connection_url (which
+// the dedup path always carries) is the secondary invariant, not endpoint.
+func TestProvisionStorage(t *testing.T) {
+	const (
+		freshToken   = "stor-fresh-tok"
+		dedupToken   = "stor-dedup-tok"
+		bucketURL    = "https://nyc3.digitaloceanspaces.com/instant-shared/abc12345/"
+		s3Endpoint   = "https://nyc3.digitaloceanspaces.com"
+		dedupNote    = "Daily anonymous limit reached — returning your existing storage bucket."
+		dedupUpgrade = "https://api.instanode.dev/start?t=jwt-abc"
+	)
+
+	tests := []struct {
+		name         string
+		status       int
+		body         map[string]any
+		wantErr      bool
+		wantToken    string
+		wantConnURL  string
+		wantEndpoint string
+	}{
+		{
+			name:   "fresh provision returns full S3 credentials",
+			status: http.StatusCreated,
+			body: map[string]any{
+				"ok":                true,
+				"id":                "stor-id",
+				"token":             freshToken,
+				"name":              "app-assets",
+				"connection_url":    bucketURL,
+				"endpoint":          s3Endpoint,
+				"access_key_id":     "key_abc12345",
+				"secret_access_key": "0123456789abcdef0123456789abcdef",
+				"prefix":            "abc12345/",
+				"tier":              "anonymous",
+				"limits":            map[string]any{"storage_mb": 10, "expires_in": "24h"},
+			},
+			wantToken:    freshToken,
+			wantConnURL:  bucketURL,
+			wantEndpoint: s3Endpoint,
+		},
+		{
+			// The dedup body intentionally omits endpoint / access_key_id /
+			// secret_access_key / prefix — exactly what api/internal/handlers/
+			// storage.go emits on the limitExceeded branch.
+			name:   "dedup path returns existing resource without S3 credentials",
+			status: http.StatusOK,
+			body: map[string]any{
+				"ok":             true,
+				"id":             "stor-id-existing",
+				"token":          dedupToken,
+				"name":           "app-assets",
+				"connection_url": bucketURL,
+				"tier":           "anonymous",
+				"env":            "development",
+				"limits":         map[string]any{"storage_mb": 10, "expires_in": "24h"},
+				"note":           dedupNote,
+				"upgrade":        dedupUpgrade,
+				"upgrade_jwt":    "jwt-abc",
+			},
+			wantToken:    dedupToken,
+			wantConnURL:  bucketURL,
+			wantEndpoint: "",
+		},
+		{
+			name:   "empty token is still an error",
+			status: http.StatusOK,
+			body: map[string]any{
+				"ok":             true,
+				"connection_url": bucketURL,
+			},
+			wantErr: true,
+		},
+		{
+			name:   "empty connection_url is still an error",
+			status: http.StatusCreated,
+			body: map[string]any{
+				"ok":    true,
+				"token": freshToken,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/storage/new", func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, tc.status, tc.body)
+			})
+			client := serve(t, mux)
+
+			result, err := client.ProvisionStorage(context.Background(), &instant.ProvisionOpts{Name: "app-assets"})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil (result=%+v)", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Token != tc.wantToken {
+				t.Errorf("Token = %q, want %q", result.Token, tc.wantToken)
+			}
+			if result.ConnectionURL != tc.wantConnURL {
+				t.Errorf("ConnectionURL = %q, want %q", result.ConnectionURL, tc.wantConnURL)
+			}
+			if result.Endpoint != tc.wantEndpoint {
+				t.Errorf("Endpoint = %q, want %q", result.Endpoint, tc.wantEndpoint)
+			}
+		})
+	}
+}

@@ -5,6 +5,10 @@ import (
 	"fmt"
 )
 
+// storagePath is the agent-API endpoint that provisions an S3-compatible
+// storage bucket prefix.
+const storagePath = "/storage/new"
+
 // StorageResult is returned by ProvisionStorage.
 //
 // A storage resource is an S3-compatible bucket prefix. Unlike the database,
@@ -89,14 +93,23 @@ func (c *Client) ProvisionStorage(ctx context.Context, opts *ProvisionOpts) (*St
 	}
 
 	var result StorageResult
-	if err := c.postJSON(ctx, "/storage/new", body, &result); err != nil {
+	if err := c.postJSON(ctx, storagePath, body, &result); err != nil {
 		return nil, fmt.Errorf("ProvisionStorage: %w", err)
 	}
 	if result.Token == "" {
 		return nil, fmt.Errorf("ProvisionStorage: server returned empty token")
 	}
-	if result.Endpoint == "" {
-		return nil, fmt.Errorf("ProvisionStorage: server returned empty endpoint")
+	// The secondary success invariant is connection_url, NOT endpoint.
+	// On the fingerprint-dedup path (HTTP 200, the 6th-call response that
+	// returns an already-provisioned storage resource) the agent API echoes
+	// the resource's connection_url but omits the S3 credential fields
+	// (endpoint, access_key_id, secret_access_key, prefix) — those are not
+	// reconstructable from the stored resource row. Checking Endpoint here
+	// turned every legitimate dedup response into a spurious error, unlike
+	// ProvisionDatabase/Cache/MongoDB/Queue whose connection_url check is
+	// satisfied on both the fresh and dedup paths. Mirror that contract.
+	if result.ConnectionURL == "" {
+		return nil, fmt.Errorf("ProvisionStorage: server returned empty connection_url")
 	}
 	if result.Note != "" {
 		c.logger.Info("instant.dev storage provisioned",
