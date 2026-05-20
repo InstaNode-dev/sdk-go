@@ -6,10 +6,14 @@ import (
 )
 
 // ProvisionCache provisions a new Redis cache namespace.
-// No account is required. The cache expires after 24 h unless claimed.
+// No account is required. Anonymous resources expire after 24h unless claimed.
 //
-// Anonymous limits: 5 MB memory.
-// Hobby limits: 25 MB. Pro: 256 MB. Team: unlimited.
+// Tier limits (see api/plans.yaml for the source of truth — fetch live via
+// GET /api/v1/capabilities for runtime decisions):
+//   Anonymous: 5 MB memory, 24h TTL
+//   Hobby:     50 MB
+//   Pro:       512 MB
+//   Team:      unlimited
 //
 // The returned [ProvisionResult] may include a KeyPrefix field when the
 // server uses key-namespace isolation instead of ACL isolation. In that case,

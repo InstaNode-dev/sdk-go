@@ -5,11 +5,15 @@ import (
 	"fmt"
 )
 
-// ProvisionDatabase provisions a new Postgres database.
-// No account is required. The database expires after 24 h unless claimed.
+// ProvisionDatabase provisions a new Postgres database (pgvector pre-installed).
+// No account is required. Anonymous resources expire after 24h unless claimed.
 //
-// Anonymous limits: 10 MB storage, 2 connections.
-// Hobby limits: 500 MB, 5 connections. Pro: 5 120 MB, 20 connections.
+// Tier limits (see api/plans.yaml for the source of truth — fetched live from
+// GET /api/v1/capabilities for runtime decisions):
+//   Anonymous: 10 MB, 2 connections, 24h TTL
+//   Hobby:     1 GB, 8 connections
+//   Pro:       10 GB, 20 connections
+//   Team:      unlimited
 //
 // opts is REQUIRED and opts.Name must be a valid resource name (1–64 chars,
 // matching ^[A-Za-z0-9][A-Za-z0-9 _-]*$). An invalid or missing name returns

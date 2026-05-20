@@ -6,10 +6,14 @@ import (
 )
 
 // ProvisionMongoDB provisions a new MongoDB database and scoped user.
-// No account is required. The database expires after 24 h unless claimed.
+// No account is required. Anonymous resources expire after 24h unless claimed.
 //
-// Anonymous limits: 5 MB storage, 2 connections.
-// Hobby limits: 100 MB, 5 connections. Pro: 2 048 MB, 20 connections.
+// Tier limits (see api/plans.yaml for the source of truth — fetch live via
+// GET /api/v1/capabilities for runtime decisions):
+//   Anonymous: 5 MB, 2 connections, 24h TTL
+//   Hobby:     100 MB, 5 connections
+//   Pro:       5 GB, 20 connections
+//   Team:      unlimited
 //
 // opts is REQUIRED and opts.Name must be a valid resource name (1–64 chars,
 // matching ^[A-Za-z0-9][A-Za-z0-9 _-]*$). An invalid or missing name returns
