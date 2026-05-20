@@ -1,6 +1,7 @@
 package instant
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 )
 
 // Deployment is the shape returned by Deploy and the deployment management
@@ -22,7 +24,18 @@ type Deployment struct {
 	// URL is the live HTTPS endpoint. Empty until Status reaches "healthy".
 	URL string `json:"url"`
 
-	// Status is one of "building", "deploying", "healthy", "failed", "stopped".
+	// Status is the lifecycle state of the deployment. The API emits any of:
+	//   "queued"     — accepted, not yet picked up by a builder
+	//   "building"   — Kaniko is building the image
+	//   "deploying"  — image built; k8s Deployment is rolling out
+	//   "succeeded"  — terminal alias for "healthy" emitted by some build paths
+	//   "healthy"    — pod is Ready and serving on Port
+	//   "failed"     — build or rollout failed; see logs for cause
+	//   "stopped"    — deploy was administratively stopped or paused
+	//
+	// Callers branching on Status should default unknown values to
+	// "still in flight" rather than failing — the API may grow this set over
+	// time. Use [Deployment.URL] != "" as the canonical "deploy is live" gate.
 	Status string `json:"status"`
 
 	// Tier is the plan tier the deploy was created under.
@@ -185,4 +198,86 @@ func (c *Client) Deploy(ctx context.Context, opts DeployOpts) (*Deployment, erro
 		return nil, fmt.Errorf("instant: decoding deploy response: %w", err)
 	}
 	return &out.Item, nil
+}
+
+// StreamDeploymentLogs streams Server-Sent Events from
+// GET /deploy/:id/logs and writes each `data:` line to w, one log line per
+// write (newline-terminated). Requires a valid API key (Bearer token).
+//
+// The connection is held open until any of:
+//   - the deployment terminates (server closes the stream),
+//   - ctx is cancelled,
+//   - w returns an error on Write,
+//   - the server returns 4xx/5xx (the function returns an *APIError immediately).
+//
+// On a 2xx response the function returns nil when the stream ends cleanly,
+// or the first error encountered. Callers wanting to see "follow" behaviour
+// for a running deployment should pass a long-running ctx and accept that
+// this is a long-lived call.
+//
+// Example — tail until the deployment finishes:
+//
+//	if err := client.StreamDeploymentLogs(ctx, d.AppID, os.Stdout); err != nil {
+//	    log.Fatal(err)
+//	}
+//
+// Closes the gap noted in B17-P1-7: previously SDK callers had to drop down
+// to raw http.Client to consume /deploy/:id/logs.
+func (c *Client) StreamDeploymentLogs(ctx context.Context, appID string, w io.Writer) error {
+	if appID == "" {
+		return fmt.Errorf("instant: StreamDeploymentLogs requires a non-empty appID")
+	}
+	if w == nil {
+		return fmt.Errorf("instant: StreamDeploymentLogs requires a non-nil writer")
+	}
+	url := c.baseURL + "/deploy/" + appID + "/logs"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("instant: building stream request: %w", err)
+	}
+	// Hint the server we expect SSE; the handler already sets the response
+	// Content-Type to text/event-stream but Accept makes our intent explicit
+	// to any intermediate proxies.
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("instant: stream request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.logHeaders(resp)
+
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		apiErr := &APIError{StatusCode: resp.StatusCode, raw: string(raw)}
+		_ = json.Unmarshal(raw, apiErr)
+		return apiErr
+	}
+
+	// Parse the SSE wire format: every event ends with a blank line; only
+	// `data: ` lines carry payload. Comment lines (`: ping`) keep the
+	// connection alive — drop them. Anything else (`event:`, `id:`,
+	// `retry:`) is ignored.
+	scanner := bufio.NewScanner(resp.Body)
+	// Bump the max line size from the 64 KB default — build log lines can
+	// exceed that (stack traces, pretty-printed JSON in customer logs).
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data:")
+		payload = strings.TrimPrefix(payload, " ") // single optional space per RFC
+		if _, err := io.WriteString(w, payload+"\n"); err != nil {
+			return fmt.Errorf("instant: writing log line: %w", err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		// io.EOF from a clean server close is not surfaced by bufio.Scanner;
+		// any error here is a real read/parse problem.
+		return fmt.Errorf("instant: reading log stream: %w", err)
+	}
+	return nil
 }
