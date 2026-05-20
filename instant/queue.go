@@ -6,10 +6,19 @@ import (
 )
 
 // ProvisionQueue provisions a new NATS JetStream stream with scoped credentials.
-// No account is required. The stream expires after 24 h unless claimed.
+// No account is required. Anonymous resources expire after 24h unless claimed.
 //
-// Anonymous limits: 1 024 MB storage.
-// Pro/Team: configurable via the dashboard.
+// Tier limits (see api/plans.yaml for the source of truth — fetch live via
+// GET /api/v1/capabilities for runtime decisions):
+//   Anonymous: 1 GB, 24h TTL
+//   Hobby:     5 GB
+//   Pro:       10 GB
+//   Team:      unlimited
+//
+// The response carries an `auth_mode` field: "isolated" (per-tenant JWT/NKEY,
+// the default for new provisions) or "legacy_open" (grandfathered, no auth).
+// New provisions land in isolated mode and the response includes nats_jwt /
+// nats_nkey / creds_file for client wiring.
 //
 // opts is REQUIRED and opts.Name must be a valid resource name (1–64 chars,
 // matching ^[A-Za-z0-9][A-Za-z0-9 _-]*$). An invalid or missing name returns

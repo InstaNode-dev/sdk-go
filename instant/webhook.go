@@ -62,10 +62,14 @@ type WebhookResult struct {
 }
 
 // ProvisionWebhook provisions a new inbound webhook receiver.
-// No account is required. The receiver expires after 24 h unless claimed.
+// No account is required. Anonymous resources expire after 24h unless claimed.
 //
-// Anonymous limits: 100 stored requests.
-// Paid tiers raise the retention cap — see the dashboard for the current limits.
+// Tier limits (see api/plans.yaml for the source of truth — fetch live via
+// GET /api/v1/capabilities for runtime decisions):
+//   Anonymous: 100 stored requests, 24h TTL
+//   Hobby:     1 000 stored
+//   Pro:       10k stored
+//   Team:      unlimited
 //
 // The returned [WebhookResult] exposes ReceiveURL — the public URL that
 // accepts inbound payloads. Stored requests can be retrieved through the

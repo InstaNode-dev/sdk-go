@@ -68,10 +68,18 @@ type StorageResult struct {
 }
 
 // ProvisionStorage provisions a new S3-compatible storage bucket prefix.
-// No account is required. The bucket prefix expires after 24 h unless claimed.
+// No account is required. Anonymous resources expire after 24h unless claimed.
 //
-// Anonymous limits: 10 MB storage.
-// Paid tiers raise the storage cap — see the dashboard for the current limits.
+// Tier limits (see api/plans.yaml for the source of truth — fetch live via
+// GET /api/v1/capabilities for runtime decisions):
+//   Anonymous: 10 MB, 24h TTL
+//   Hobby:     512 MB
+//   Pro:       50 GB
+//   Team:      unlimited
+//
+// The response carries a `mode` field describing the credential isolation
+// level: "shared-master-key" / "prefix-scoped" / "prefix-scoped-temporary"
+// / "broker". Prod default is "prefix-scoped" (DO Spaces backend).
 //
 // The returned [StorageResult] carries S3 credentials (Endpoint, AccessKeyID,
 // SecretAccessKey) and a per-token key Prefix. Configure any S3 client with
