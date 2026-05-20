@@ -33,7 +33,11 @@ type ProvisionResult struct {
 	// Limits describes the storage and connection limits for this resource.
 	Limits ResourceLimits `json:"limits"`
 
-	// KeyPrefix is set for Redis resources that use key-namespace isolation.
+	// KeyPrefix is set for Redis resources on legacy backends that use
+	// key-namespace isolation. Empty for the current Redis backend, which
+	// isolates tenants via dedicated ACL users (no shared keyspace, no
+	// prefix needed) — and empty for every non-Redis resource type. Kept
+	// for backward compatibility with callers reading older responses.
 	KeyPrefix string `json:"key_prefix,omitempty"`
 
 	// Note contains an upgrade CTA or advisory message from the server.

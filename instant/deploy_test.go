@@ -242,3 +242,76 @@ func TestDeploy_OmitsEmptyOptionalFields(t *testing.T) {
 // Sanity probe — make sure multipart writer is reachable from this package's
 // imports so we don't accidentally bury a future test dependency change.
 var _ = multipart.NewWriter
+
+// TestStreamDeploymentLogs_ParsesSSEAndWritesLines covers B17-P1-7. The SDK
+// previously had no helper for /deploy/:id/logs — callers had to hand-roll
+// SSE parsing. This test pins the contract: data:-prefixed lines surface as
+// newline-terminated log lines on the supplied writer; comment lines (`:
+// ping`) and other SSE control fields are dropped.
+func TestStreamDeploymentLogs_ParsesSSEAndWritesLines(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/deploy/abc12345/logs" {
+			http.Error(w, "wrong path", http.StatusNotFound)
+			return
+		}
+		if got := r.Header.Get("Accept"); !strings.Contains(got, "text/event-stream") {
+			t.Errorf("Accept = %q; want text/event-stream hint", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// Mix of data lines, keepalive comments, and other SSE controls
+		// the parser should ignore.
+		_, _ = io.WriteString(w, ": ping\n\n")
+		_, _ = io.WriteString(w, "data: line one\n\n")
+		_, _ = io.WriteString(w, "event: heartbeat\n\n")
+		_, _ = io.WriteString(w, "data: line two\n\n")
+		_, _ = io.WriteString(w, "data:line three\n\n") // no space after colon
+	}))
+	defer srv.Close()
+
+	client := instant.New(instant.WithBaseURL(srv.URL))
+	var out bytes.Buffer
+	if err := client.StreamDeploymentLogs(context.Background(), "abc12345", &out); err != nil {
+		t.Fatalf("StreamDeploymentLogs: %v", err)
+	}
+	want := "line one\nline two\nline three\n"
+	if out.String() != want {
+		t.Errorf("output = %q; want %q", out.String(), want)
+	}
+}
+
+// TestStreamDeploymentLogs_SurfacesAPIError pins the 4xx-on-stream branch:
+// when the API returns 404 (deployment-not-found) before any SSE bytes, the
+// helper must return an *APIError, not nil.
+func TestStreamDeploymentLogs_SurfacesAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":"not_found","message":"Deployment not found"}`)
+	}))
+	defer srv.Close()
+
+	client := instant.New(instant.WithBaseURL(srv.URL))
+	var out bytes.Buffer
+	err := client.StreamDeploymentLogs(context.Background(), "missing0", &out)
+	if err == nil {
+		t.Fatalf("expected APIError, got nil")
+	}
+	var apiErr *instant.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 404 {
+		t.Errorf("StatusCode = %d; want 404", apiErr.StatusCode)
+	}
+}
+
+// TestStreamDeploymentLogs_RejectsEmptyAppID guards the precondition — the
+// helper must not even attempt a network call when appID is empty (would
+// otherwise hit /deploy//logs which fasthttp dislikes).
+func TestStreamDeploymentLogs_RejectsEmptyAppID(t *testing.T) {
+	client := instant.New(instant.WithBaseURL("http://example.invalid"))
+	if err := client.StreamDeploymentLogs(context.Background(), "", &bytes.Buffer{}); err == nil {
+		t.Fatal("expected validation error for empty appID")
+	}
+}

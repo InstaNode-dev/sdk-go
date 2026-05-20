@@ -73,7 +73,11 @@ func WithAPIKey(key string) Option {
 // WithBaseURL overrides the default API base URL (https://api.instanode.dev).
 // Useful for pointing at a local development server:
 //
-//	client := instant.New(instant.WithBaseURL("http://localhost:30080"))
+//	client := instant.New(instant.WithBaseURL("http://localhost:8080"))
+//
+// The earlier `:30080` NodePort was retired 2026-05-11; the agent API now
+// runs on a ClusterIP Service inside k8s and is reached locally via
+// `kubectl port-forward -n instant svc/instant-api 8080:8080`.
 func WithBaseURL(url string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(url, "/") }
 }

@@ -48,9 +48,17 @@ type StorageResult struct {
 	// PresignURL is the absolute URL for the broker-mode presign endpoint.
 	// Populated when the backend has no per-tenant credential model (DO
 	// Spaces' shared-master-key mode): the tenant calls this URL with
-	// {"key":"<object-key>","method":"GET|PUT"} to mint a short-lived
-	// presigned S3 URL. Empty when the backend issued real credentials
-	// (AccessKeyID / SecretAccessKey populated).
+	// {"key":"<object-key>","operation":"GET|PUT","expires_in":<seconds>}
+	// to mint a short-lived presigned S3 URL. Empty when the backend issued
+	// real credentials (AccessKeyID / SecretAccessKey populated).
+	//
+	// Broker mode is read+write only — only GET and PUT operations are
+	// supported by /storage/:token/presign. DELETE is intentionally
+	// unsupported in broker mode; objects must either age out via the
+	// bucket's lifecycle policy (anonymous tier: 24h TTL on
+	// instant-shared) or be removed administratively. Tenants needing
+	// per-object delete control should provision on a backend that
+	// returns real credentials (R2 / S3 / MinIO) instead of DO Spaces.
 	//
 	// Always absolute — the SDK rewrites the server's relative path
 	// (e.g. "/storage/<token>/presign") to the configured base URL.
@@ -61,6 +69,15 @@ type StorageResult struct {
 	// "prefix-scoped-temporary", "broker". Surfaces what isolation the
 	// tenant actually has; broker mode means AccessKeyID/SecretAccessKey
 	// are empty and the tenant must use PresignURL instead.
+	//
+	// Caveat — fingerprint-dedup responses: on the 6th provision-call
+	// from a single anonymous fingerprint the API returns the previously
+	// provisioned resource and reports Mode based on the bucket-level
+	// backend capability (not whether the original credential was STS).
+	// For an STS-issued credential the dedup response surfaces
+	// "prefix-scoped" rather than "prefix-scoped-temporary"; the
+	// underlying isolation is unchanged. Treat Mode as advisory on the
+	// dedup path and consult the cached credential, not the field.
 	Mode string `json:"mode,omitempty"`
 
 	// Tier is the plan tier this resource was provisioned under.
