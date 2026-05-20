@@ -8,13 +8,14 @@ import (
 // Claim converts an anonymous session into a registered team account.
 //
 // The JWT is the onboarding token obtained from the upgrade URL. When
-// instant.dev provisions an anonymous resource it returns a Note field
-// containing a URL like https://instant.dev/start?t=<jwt>. Extract the
+// instanode.dev provisions an anonymous resource it returns a Note field
+// containing a URL like https://instanode.dev/start?t=<jwt>. Extract the
 // "t" query parameter and pass it here.
 //
-// On success all anonymous resources associated with the JWT's fingerprint
-// are transferred to the new team and given a permanent (no-expiry) lifetime.
-// A 14-day pro trial is started automatically.
+// Claim is one-time: anonymous (24h TTL) resources associated with the JWT's
+// fingerprint are transferred to the new team and given a permanent (no-expiry)
+// lifetime on the free tier. No trial period is started — paid tiers (hobby,
+// pro, team) require a separate Razorpay checkout from the dashboard.
 //
 // Returns [*APIError] with StatusCode 409 if the JWT has already been claimed.
 //

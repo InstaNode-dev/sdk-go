@@ -49,9 +49,6 @@ const (
 
 	// defaultTimeout is applied to every HTTP request.
 	defaultTimeout = 30 * time.Second
-
-	// sdkVersion is sent in the User-Agent header.
-	sdkVersion = "instant-go-sdk/0.2"
 )
 
 // Client is the instant.dev API client.
@@ -82,9 +79,22 @@ func WithBaseURL(url string) Option {
 }
 
 // WithHTTPClient replaces the default HTTP client. Useful for custom transports
-// such as distributed tracing or custom TLS configuration.
+// such as distributed tracing (OpenTelemetry), custom TLS, or proxy injection.
+//
+// The caller's [http.Client] fields — Timeout, Transport, CheckRedirect, Jar —
+// are preserved. The SDK's auth transport (which sets User-Agent and the
+// Authorization header) is layered on top of the caller's Transport so the
+// caller's RoundTripper still observes every request and can wrap, observe,
+// or modify it before it hits the wire.
+//
+// If hc is nil this option is a no-op.
 func WithHTTPClient(hc *http.Client) Option {
-	return func(c *Client) { c.httpClient = hc }
+	return func(c *Client) {
+		if hc == nil {
+			return
+		}
+		c.httpClient = hc
+	}
 }
 
 // WithTimeout sets the per-request HTTP timeout. Default is 30 s.
@@ -108,7 +118,7 @@ func WithLogger(l *slog.Logger) Option {
 func New(opts ...Option) *Client {
 	c := &Client{
 		baseURL:   DefaultBaseURL,
-		userAgent: sdkVersion,
+		userAgent: userAgentString(),
 		logger:    slog.Default(),
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
@@ -127,15 +137,30 @@ func New(opts ...Option) *Client {
 		opt(c)
 	}
 
-	// Wire auth transport
-	c.httpClient = &http.Client{
-		Timeout: c.httpClient.Timeout,
+	// Wire the auth transport on top of whatever the caller supplied. We
+	// preserve every field on the caller's *http.Client (Timeout,
+	// CheckRedirect, Jar, Transport) and chain the caller's Transport as the
+	// inner RoundTripper so OpenTelemetry instrumentation, custom TLS, proxy
+	// injection, and other RoundTripper wrappers keep working. If the caller
+	// did not set a Transport, we fall through to http.DefaultTransport.
+	//
+	// Previous behavior — silently discarded the caller's Transport, keeping
+	// only Timeout — broke every legitimate use of WithHTTPClient (B17-P0).
+	base := c.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	wrapped := &http.Client{
+		Timeout:       c.httpClient.Timeout,
+		CheckRedirect: c.httpClient.CheckRedirect,
+		Jar:           c.httpClient.Jar,
 		Transport: &authTransport{
-			base:      http.DefaultTransport,
+			base:      base,
 			apiKey:    c.apiKey,
 			userAgent: c.userAgent,
 		},
 	}
+	c.httpClient = wrapped
 
 	return c
 }
@@ -154,6 +179,12 @@ func (c *Client) post(ctx context.Context, path string, out any) error {
 
 // postJSON executes a POST request with a JSON-encoded body and decodes the response.
 func (c *Client) postJSON(ctx context.Context, path string, body any, out any) error {
+	return c.postJSONWithHeaders(ctx, path, body, nil, out)
+}
+
+// postJSONWithHeaders is like postJSON but also sets extra request headers.
+// Used by the provisioning helpers to forward the optional Idempotency-Key.
+func (c *Client) postJSONWithHeaders(ctx context.Context, path string, body any, headers map[string]string, out any) error {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -162,7 +193,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body any, out any) e
 		}
 		r = bytes.NewReader(b)
 	}
-	return c.do(ctx, http.MethodPost, path, r, out)
+	return c.doWithHeaders(ctx, http.MethodPost, path, r, headers, out)
 }
 
 // delete executes a DELETE request and decodes the JSON response into out.
@@ -172,6 +203,12 @@ func (c *Client) delete(ctx context.Context, path string, out any) error {
 
 // do executes an HTTP request. It retries once on 5xx responses.
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, out any) error {
+	return c.doWithHeaders(ctx, method, path, body, nil, out)
+}
+
+// doWithHeaders is like do but allows the caller to attach extra request
+// headers (e.g. Idempotency-Key). headers may be nil.
+func (c *Client) doWithHeaders(ctx context.Context, method, path string, body io.Reader, headers map[string]string, out any) error {
 	rawURL := c.baseURL + path
 
 	// If we have a body reader we need to be able to re-read it on retry.
@@ -198,6 +235,11 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 		}
 		if bodyBytes != nil {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		for k, v := range headers {
+			if v != "" {
+				req.Header.Set(k, v)
+			}
 		}
 
 		resp, err := c.httpClient.Do(req)

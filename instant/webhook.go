@@ -91,7 +91,7 @@ func (c *Client) ProvisionWebhook(ctx context.Context, opts *ProvisionOpts) (*We
 	}
 
 	var result WebhookResult
-	if err := c.postJSON(ctx, "/webhook/new", body, &result); err != nil {
+	if err := c.postJSONWithHeaders(ctx, "/webhook/new", body, provisionHeaders(opts), &result); err != nil {
 		return nil, fmt.Errorf("ProvisionWebhook: %w", err)
 	}
 	if result.Token == "" {

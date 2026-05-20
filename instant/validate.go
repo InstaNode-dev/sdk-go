@@ -42,3 +42,14 @@ func provisionBody(opts *ProvisionOpts) (map[string]string, error) {
 	}
 	return map[string]string{"name": opts.Name}, nil
 }
+
+// provisionHeaders returns the extra HTTP headers — currently just the
+// optional Idempotency-Key — that the Provision* helpers attach to each
+// request. Returns nil when opts.IdempotencyKey is empty so callers don't
+// pay for an empty header send.
+func provisionHeaders(opts *ProvisionOpts) map[string]string {
+	if opts == nil || opts.IdempotencyKey == "" {
+		return nil
+	}
+	return map[string]string{"Idempotency-Key": opts.IdempotencyKey}
+}
