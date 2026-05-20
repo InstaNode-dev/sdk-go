@@ -108,11 +108,35 @@ type ResourceList struct {
 	// OK is always true on success.
 	OK bool `json:"ok"`
 
-	// Items contains all resources belonging to the authenticated team.
+	// Items contains the resources in this page.
 	Items []Resource `json:"items"`
 
-	// Total is the number of items.
+	// Total is the total count across all pages (when the server reports one),
+	// or the number of items in this page if the server did not surface a
+	// total. Callers should not rely on Total being non-zero — page using
+	// NextCursor instead.
 	Total int `json:"total"`
+
+	// NextCursor is the cursor to pass to a subsequent ListResources call to
+	// fetch the next page. Empty when there are no more pages. Older API
+	// versions that do not paginate leave this empty on the first response.
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// ListResourcesOpts are the parameters for paginated [Client.ListResources].
+//
+// Zero-value is the legacy "fetch first page with the server's default page
+// size" behaviour. Page forward by re-issuing the call with
+// Cursor=prevResult.NextCursor until NextCursor is empty.
+type ListResourcesOpts struct {
+	// Cursor is the opaque pagination token returned in the previous
+	// response's NextCursor field. Empty asks for the first page.
+	Cursor string
+
+	// Limit caps the page size. 0 = server default (currently 100). The
+	// server may clamp very large values; the SDK passes the value through
+	// without client-side validation.
+	Limit int
 }
 
 // ClaimResult is returned by Claim.
@@ -152,6 +176,18 @@ type ProvisionOpts struct {
 	// and hyphens thereafter). The SDK validates this client-side before
 	// sending the request.
 	Name string `json:"name"`
+
+	// IdempotencyKey is an optional Stripe/AWS-style replay guard. When set,
+	// the SDK forwards it as the `Idempotency-Key` HTTP header. The API
+	// caches the first response for 24h and replays return the cached body
+	// with `X-Idempotent-Replay: true`.
+	//
+	// Recommended whenever the caller might retry a provision after a network
+	// flake; without it, a retry can create a duplicate resource on the
+	// server even when the first call succeeded.
+	//
+	// Not serialized into the JSON body.
+	IdempotencyKey string `json:"-"`
 }
 
 // ClaimOpts are the parameters for the Claim method.

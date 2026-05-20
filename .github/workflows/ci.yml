@@ -2,15 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need tags for the version-tag check below
 
       - uses: actions/setup-go@v5
         with:
@@ -18,4 +20,24 @@ jobs:
 
       - run: go build ./...
       - run: go vet ./...
+      - run: go vet ./examples/...
       - run: go test ./... -v -race -count=1
+
+      # B17-P1: assert SDKVersion in instant/version.go matches an annotated
+      # vX.Y.Z git tag on the current commit, when one exists. Untagged
+      # commits skip the check.
+      - name: Verify SDKVersion matches git tag
+        run: |
+          set -euo pipefail
+          tag="$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          if [ -z "$tag" ]; then
+            echo "No vX.Y.Z tag on HEAD — skipping version-tag check"
+            exit 0
+          fi
+          expected="${tag#v}"
+          got="$(grep -E '^var SDKVersion = "' instant/version.go | sed -E 's/^var SDKVersion = "([^"]+)".*/\1/')"
+          echo "tag=$tag expected=$expected got=$got"
+          if [ "$got" != "$expected" ]; then
+            echo "::error ::SDKVersion=$got does not match tag $tag (expected $expected). Bump instant/version.go before tagging."
+            exit 1
+          fi

@@ -39,7 +39,7 @@ func (c *Client) ProvisionQueue(ctx context.Context, opts *ProvisionOpts) (*Prov
 	}
 
 	var result ProvisionResult
-	if err := c.postJSON(ctx, "/queue/new", body, &result); err != nil {
+	if err := c.postJSONWithHeaders(ctx, "/queue/new", body, provisionHeaders(opts), &result); err != nil {
 		return nil, fmt.Errorf("ProvisionQueue: %w", err)
 	}
 	if result.Token == "" {

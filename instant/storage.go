@@ -3,6 +3,7 @@ package instant
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // storagePath is the agent-API endpoint that provisions an S3-compatible
@@ -43,6 +44,24 @@ type StorageResult struct {
 	// Prefix is the object-key prefix this resource is scoped to. All object
 	// keys written by this resource must start with this prefix.
 	Prefix string `json:"prefix"`
+
+	// PresignURL is the absolute URL for the broker-mode presign endpoint.
+	// Populated when the backend has no per-tenant credential model (DO
+	// Spaces' shared-master-key mode): the tenant calls this URL with
+	// {"key":"<object-key>","method":"GET|PUT"} to mint a short-lived
+	// presigned S3 URL. Empty when the backend issued real credentials
+	// (AccessKeyID / SecretAccessKey populated).
+	//
+	// Always absolute — the SDK rewrites the server's relative path
+	// (e.g. "/storage/<token>/presign") to the configured base URL.
+	PresignURL string `json:"presign_url,omitempty"`
+
+	// Mode is the credential-isolation mode the server chose for this
+	// resource. One of: "shared-master-key", "prefix-scoped",
+	// "prefix-scoped-temporary", "broker". Surfaces what isolation the
+	// tenant actually has; broker mode means AccessKeyID/SecretAccessKey
+	// are empty and the tenant must use PresignURL instead.
+	Mode string `json:"mode,omitempty"`
 
 	// Tier is the plan tier this resource was provisioned under.
 	Tier string `json:"tier"`
@@ -101,7 +120,7 @@ func (c *Client) ProvisionStorage(ctx context.Context, opts *ProvisionOpts) (*St
 	}
 
 	var result StorageResult
-	if err := c.postJSON(ctx, storagePath, body, &result); err != nil {
+	if err := c.postJSONWithHeaders(ctx, storagePath, body, provisionHeaders(opts), &result); err != nil {
 		return nil, fmt.Errorf("ProvisionStorage: %w", err)
 	}
 	if result.Token == "" {
@@ -119,6 +138,11 @@ func (c *Client) ProvisionStorage(ctx context.Context, opts *ProvisionOpts) (*St
 	if result.ConnectionURL == "" {
 		return nil, fmt.Errorf("ProvisionStorage: server returned empty connection_url")
 	}
+	// Broker mode (DO Spaces shared-master-key) returns a relative presign
+	// path like "/storage/<token>/presign". SDK callers should never have to
+	// reassemble URLs by hand — absolutize against the client's BaseURL so
+	// every returned URL is directly usable.
+	result.PresignURL = absoluteURL(c.baseURL, result.PresignURL)
 	if result.Note != "" {
 		c.logger.Info("instant.dev storage provisioned",
 			"token", result.Token,
@@ -127,4 +151,20 @@ func (c *Client) ProvisionStorage(ctx context.Context, opts *ProvisionOpts) (*St
 		)
 	}
 	return &result, nil
+}
+
+// absoluteURL converts a possibly-relative URL into an absolute one by joining
+// it onto base. Returns the empty string unchanged, returns urlStr unchanged
+// when it already carries a scheme. Exported helpers can rely on this for
+// consistent absolute-URL behavior.
+func absoluteURL(base, urlStr string) string {
+	if urlStr == "" {
+		return ""
+	}
+	if strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://") {
+		return urlStr
+	}
+	// Trim a leading slash so we don't double-slash when base already
+	// carries the host root.
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(urlStr, "/")
 }

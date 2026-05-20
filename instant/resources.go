@@ -3,13 +3,16 @@ package instant
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 )
 
 // listResponse is the raw response shape from GET /api/v1/resources.
 type listResponse struct {
-	OK    bool       `json:"ok"`
-	Items []Resource `json:"items"`
-	Total int        `json:"total"`
+	OK         bool       `json:"ok"`
+	Items      []Resource `json:"items"`
+	Total      int        `json:"total"`
+	NextCursor string     `json:"next_cursor,omitempty"`
 }
 
 // getResponse is the raw response shape from GET /api/v1/resources/:token.
@@ -24,8 +27,13 @@ type deleteResponse struct {
 	Message string `json:"message"`
 }
 
-// ListResources returns all resources belonging to the authenticated team.
-// Requires a valid API key (Bearer token).
+// ListResources returns the first page of resources belonging to the
+// authenticated team. Requires a valid API key (Bearer token).
+//
+// This is a thin wrapper around [Client.ListResourcesPage] with a zero-value
+// [ListResourcesOpts]. Use [Client.ListResourcesPage] (or pass options
+// directly) when you need to iterate beyond the first page or set a smaller
+// page size.
 //
 // Example:
 //
@@ -35,14 +43,47 @@ type deleteResponse struct {
 //	    fmt.Printf("%s  %s  %s\n", r.ResourceType, r.Token, r.Status)
 //	}
 func (c *Client) ListResources(ctx context.Context) (*ResourceList, error) {
+	return c.ListResourcesPage(ctx, ListResourcesOpts{})
+}
+
+// ListResourcesPage returns one page of resources belonging to the
+// authenticated team, honouring the supplied cursor + limit. Requires a valid
+// API key (Bearer token).
+//
+// To iterate every page:
+//
+//	opts := instant.ListResourcesOpts{Limit: 50}
+//	for {
+//	    page, err := client.ListResourcesPage(ctx, opts)
+//	    if err != nil { return err }
+//	    for _, r := range page.Items {
+//	        // ...
+//	    }
+//	    if page.NextCursor == "" { break }
+//	    opts.Cursor = page.NextCursor
+//	}
+func (c *Client) ListResourcesPage(ctx context.Context, opts ListResourcesOpts) (*ResourceList, error) {
+	path := "/api/v1/resources"
+	q := url.Values{}
+	if opts.Cursor != "" {
+		q.Set("cursor", opts.Cursor)
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+
 	var raw listResponse
-	if err := c.get(ctx, "/api/v1/resources", &raw); err != nil {
+	if err := c.get(ctx, path, &raw); err != nil {
 		return nil, fmt.Errorf("ListResources: %w", err)
 	}
 	return &ResourceList{
-		OK:    raw.OK,
-		Items: raw.Items,
-		Total: raw.Total,
+		OK:         raw.OK,
+		Items:      raw.Items,
+		Total:      raw.Total,
+		NextCursor: raw.NextCursor,
 	}, nil
 }
 
