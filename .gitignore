@@ -1,0 +1,9 @@
+
+# Internal Claude Code skills
+.claude/
+
+# Compiled binaries — build artifacts only
+/agent-bootstrap
+/cron-monitor
+/provision-all
+*.test
