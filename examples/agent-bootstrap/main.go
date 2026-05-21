@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -36,39 +37,55 @@ var envVars = map[string]string{
 
 func main() {
 	ctx := context.Background()
-
-	// Load existing .env so we can skip already-provisioned resources.
-	existing := loadDotEnv(envFile)
-
 	client := instant.New()
+	if err := Run(ctx, client, envFile, os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	fmt.Println("instant.dev agent-bootstrap: provisioning project infrastructure...")
-	fmt.Println()
+// Run executes the bootstrap flow against client, reading + writing path as
+// the .env file and emitting progress to out. It is extracted from main() so
+// the example is covered by the package's tests without spinning up a real
+// network: tests pass an httptest-backed *instant.Client, a temp-dir .env
+// path, and io.Discard.
+//
+// Behaviour matches the agent contract:
+//  1. Load existing .env (missing file is treated as empty).
+//  2. For each missing key (DATABASE_URL / REDIS_URL / NATS_URL), provision
+//     the corresponding resource and record the connection URL.
+//  3. Write the merged values back to .env in a stable, predictable order.
+//
+// Run returns the first provisioning error encountered.
+func Run(ctx context.Context, client *instant.Client, path string, out io.Writer) error {
+	existing := loadDotEnv(path)
+
+	fmt.Fprintln(out, "instant.dev agent-bootstrap: provisioning project infrastructure...")
+	fmt.Fprintln(out)
 
 	updates := map[string]string{}
 
 	// --- Postgres ---
 	if existing["DATABASE_URL"] == "" {
-		fmt.Print("  Provisioning Postgres... ")
+		fmt.Fprint(out, "  Provisioning Postgres... ")
 		db, err := client.ProvisionDatabase(ctx, &instant.ProvisionOpts{Name: "app-db"})
 		if err != nil {
-			log.Fatalf("postgres: %v", err)
+			return fmt.Errorf("postgres: %w", err)
 		}
 		updates["DATABASE_URL"] = db.ConnectionURL
-		fmt.Printf("OK  (%s tier, %d MB)\n", db.Tier, db.Limits.StorageMB)
+		fmt.Fprintf(out, "OK  (%s tier, %d MB)\n", db.Tier, db.Limits.StorageMB)
 		if db.Note != "" {
-			fmt.Println("     Note:", db.Note)
+			fmt.Fprintln(out, "     Note:", db.Note)
 		}
 	} else {
-		fmt.Println("  Postgres: already provisioned, skipping.")
+		fmt.Fprintln(out, "  Postgres: already provisioned, skipping.")
 	}
 
 	// --- Redis ---
 	if existing["REDIS_URL"] == "" {
-		fmt.Print("  Provisioning Redis...    ")
+		fmt.Fprint(out, "  Provisioning Redis...    ")
 		cache, err := client.ProvisionCache(ctx, &instant.ProvisionOpts{Name: "app-cache"})
 		if err != nil {
-			log.Fatalf("redis: %v", err)
+			return fmt.Errorf("redis: %w", err)
 		}
 		val := cache.ConnectionURL
 		if cache.KeyPrefix != "" {
@@ -76,40 +93,42 @@ func main() {
 			val = cache.ConnectionURL + "  # key prefix: " + cache.KeyPrefix
 		}
 		updates["REDIS_URL"] = val
-		fmt.Printf("OK  (%s tier, %d MB)\n", cache.Tier, cache.Limits.MemoryMB)
+		fmt.Fprintf(out, "OK  (%s tier, %d MB)\n", cache.Tier, cache.Limits.MemoryMB)
 	} else {
-		fmt.Println("  Redis:    already provisioned, skipping.")
+		fmt.Fprintln(out, "  Redis:    already provisioned, skipping.")
 	}
 
 	// --- NATS Queue ---
 	if existing["NATS_URL"] == "" {
-		fmt.Print("  Provisioning NATS...     ")
+		fmt.Fprint(out, "  Provisioning NATS...     ")
 		q, err := client.ProvisionQueue(ctx, &instant.ProvisionOpts{Name: "app-queue"})
 		if err != nil {
-			log.Fatalf("nats: %v", err)
+			return fmt.Errorf("nats: %w", err)
 		}
 		updates["NATS_URL"] = q.ConnectionURL
-		fmt.Printf("OK  (%s tier, %d MB)\n", q.Tier, q.Limits.StorageMB)
+		fmt.Fprintf(out, "OK  (%s tier, %d MB)\n", q.Tier, q.Limits.StorageMB)
 	} else {
-		fmt.Println("  NATS:     already provisioned, skipping.")
+		fmt.Fprintln(out, "  NATS:     already provisioned, skipping.")
 	}
 
 	// Write new values to .env
 	if len(updates) > 0 {
-		if err := writeDotEnv(envFile, existing, updates); err != nil {
-			log.Fatalf("write .env: %v", err)
+		if err := writeDotEnv(path, existing, updates); err != nil {
+			return fmt.Errorf("write .env: %w", err)
 		}
-		fmt.Println()
-		fmt.Printf("Wrote %d new values to %s\n", len(updates), envFile)
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "Wrote %d new values to %s\n", len(updates), path)
 	}
 
-	fmt.Println()
-	fmt.Println("Bootstrap complete.")
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Load .env in your app (e.g. github.com/joho/godotenv)")
-	fmt.Println("  2. Claim your resources permanently: https://instant.dev/start")
-	fmt.Println("  3. Set INSTANT_API_KEY in your secret manager after claiming.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Bootstrap complete.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Next steps:")
+	fmt.Fprintln(out, "  1. Load .env in your app (e.g. github.com/joho/godotenv)")
+	fmt.Fprintln(out, "  2. Claim your resources permanently: https://instant.dev/start")
+	fmt.Fprintln(out, "  3. Set INSTANT_API_KEY in your secret manager after claiming.")
+
+	return nil
 }
 
 // loadDotEnv reads a .env file and returns a map of key=value pairs.
