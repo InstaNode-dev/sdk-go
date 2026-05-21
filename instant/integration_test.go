@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 // integrationClient returns a Client pointed at INSTANT_API_URL, or skips the

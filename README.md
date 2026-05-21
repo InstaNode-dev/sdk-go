@@ -8,7 +8,7 @@ no account, no Docker, no setup.
 **[https://instanode.dev](https://instanode.dev)**
 
 ```
-go get instanode.dev/sdk/go
+go get github.com/InstaNode-dev/sdk-go@latest
 ```
 
 Zero external dependencies. Requires Go 1.22+.
@@ -27,7 +27,7 @@ import (
     "fmt"
     "log"
 
-    "instanode.dev/sdk/go/instant"
+    "github.com/InstaNode-dev/sdk-go/instant"
 )
 
 func main() {

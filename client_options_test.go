@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 // markerTransport is an http.RoundTripper that stamps a marker header on every
