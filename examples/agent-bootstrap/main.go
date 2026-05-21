@@ -19,7 +19,7 @@ import (
 	"os"
 	"strings"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 const envFile = ".env"

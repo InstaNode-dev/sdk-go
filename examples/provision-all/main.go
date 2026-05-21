@@ -16,7 +16,7 @@ import (
 	"log"
 	"sync"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 type results struct {

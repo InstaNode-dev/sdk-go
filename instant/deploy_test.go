@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 // TestDefaultBaseURLIsCanonical guards Wave FIX-E #C2 — DefaultBaseURL used to

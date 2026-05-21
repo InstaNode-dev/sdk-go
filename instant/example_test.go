@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 func ExampleClient_ProvisionDatabase() {

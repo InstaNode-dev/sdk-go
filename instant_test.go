@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"testing"
 
-	"instant.dev/sdk/go/instant"
+	"github.com/InstaNode-dev/sdk-go/instant"
 )
 
 // TestListResourcesPage_Pagination pins B17-P1: ListResourcesPage forwards
