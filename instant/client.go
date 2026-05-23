@@ -265,7 +265,7 @@ func (c *Client) doWithHeaders(ctx context.Context, method, path string, body io
 
 		if resp.StatusCode >= 500 && attempt == 0 {
 			io.Copy(io.Discard, resp.Body) //nolint:errcheck
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("server error %d", resp.StatusCode)
 			select {
 			case <-ctx.Done():
@@ -275,7 +275,7 @@ func (c *Client) doWithHeaders(ctx context.Context, method, path string, body io
 			continue
 		}
 
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode >= 400 {
 			raw, _ := io.ReadAll(resp.Body)

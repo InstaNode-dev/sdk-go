@@ -192,7 +192,7 @@ func TestProvisionStorage_PresignURL_Absolute(t *testing.T) {
 				}
 				return
 			}
-			if tc.wantAbs && !(stringHasPrefix(got.PresignURL, "http://") || stringHasPrefix(got.PresignURL, "https://")) {
+			if tc.wantAbs && !stringHasPrefix(got.PresignURL, "http://") && !stringHasPrefix(got.PresignURL, "https://") {
 				t.Errorf("PresignURL = %q is not absolute", got.PresignURL)
 			}
 			if !stringHasSuffix(got.PresignURL, tc.wantSuffix) {

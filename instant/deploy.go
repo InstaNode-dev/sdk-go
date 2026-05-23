@@ -182,7 +182,7 @@ func (c *Client) Deploy(ctx context.Context, opts DeployOpts) (*Deployment, erro
 	if err != nil {
 		return nil, fmt.Errorf("instant: deploy request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	c.logHeaders(resp)
 
@@ -244,7 +244,7 @@ func (c *Client) StreamDeploymentLogs(ctx context.Context, appID string, w io.Wr
 	if err != nil {
 		return fmt.Errorf("instant: stream request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	c.logHeaders(resp)
 
