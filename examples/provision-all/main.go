@@ -13,7 +13,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"sync"
 
 	"github.com/InstaNode-dev/sdk-go/instant"
@@ -30,8 +32,24 @@ type results struct {
 func main() {
 	ctx := context.Background()
 	client := instant.New()
+	if err := Run(ctx, client, os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	fmt.Println("Provisioning all infrastructure...")
+// Run executes the parallel provisioning flow against client, writing
+// progress + results to out. Extracted from main() so tests can drive the
+// happy + error paths via httptest without printing to stderr or calling
+// log.Fatalf. Returns the first joined-error encountered (or nil on success).
+//
+// Behaviour matches the original main():
+//   - Provisions postgres, redis, queue in parallel.
+//   - On any failure, prints every error to out and returns a non-nil error
+//     summarising the count.
+//   - On success, prints the resource list and an anonymous-tier upsell hint
+//     when applicable.
+func Run(ctx context.Context, client *instant.Client, out io.Writer) error {
+	fmt.Fprintln(out, "Provisioning all infrastructure...")
 
 	var res results
 	var wg sync.WaitGroup
@@ -85,48 +103,49 @@ func main() {
 
 	if len(res.errs) > 0 {
 		for _, e := range res.errs {
-			log.Println("error:", e)
+			fmt.Fprintln(out, "error:", e)
 		}
-		log.Fatalf("%d provisioning error(s)", len(res.errs))
+		return fmt.Errorf("%d provisioning error(s)", len(res.errs))
 	}
 
-	fmt.Println()
-	fmt.Println("=== instant.dev resources ===")
-	fmt.Println()
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "=== instant.dev resources ===")
+	fmt.Fprintln(out)
 
 	if res.db != nil {
-		fmt.Printf("POSTGRES\n")
-		fmt.Printf("  token:   %s\n", res.db.Token)
-		fmt.Printf("  url:     %s\n", res.db.ConnectionURL)
-		fmt.Printf("  tier:    %s  |  storage: %d MB  |  connections: %d\n",
+		fmt.Fprintf(out, "POSTGRES\n")
+		fmt.Fprintf(out, "  token:   %s\n", res.db.Token)
+		fmt.Fprintf(out, "  url:     %s\n", res.db.ConnectionURL)
+		fmt.Fprintf(out, "  tier:    %s  |  storage: %d MB  |  connections: %d\n",
 			res.db.Tier, res.db.Limits.StorageMB, res.db.Limits.Connections)
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
 	if res.cache != nil {
-		fmt.Printf("REDIS\n")
-		fmt.Printf("  token:   %s\n", res.cache.Token)
-		fmt.Printf("  url:     %s\n", res.cache.ConnectionURL)
+		fmt.Fprintf(out, "REDIS\n")
+		fmt.Fprintf(out, "  token:   %s\n", res.cache.Token)
+		fmt.Fprintf(out, "  url:     %s\n", res.cache.ConnectionURL)
 		if res.cache.KeyPrefix != "" {
-			fmt.Printf("  prefix:  %s\n", res.cache.KeyPrefix)
+			fmt.Fprintf(out, "  prefix:  %s\n", res.cache.KeyPrefix)
 		}
-		fmt.Printf("  tier:    %s  |  memory: %d MB\n",
+		fmt.Fprintf(out, "  tier:    %s  |  memory: %d MB\n",
 			res.cache.Tier, res.cache.Limits.MemoryMB)
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
 	if res.queue != nil {
-		fmt.Printf("NATS QUEUE\n")
-		fmt.Printf("  token:   %s\n", res.queue.Token)
-		fmt.Printf("  url:     %s\n", res.queue.ConnectionURL)
-		fmt.Printf("  tier:    %s  |  storage: %d MB\n",
+		fmt.Fprintf(out, "NATS QUEUE\n")
+		fmt.Fprintf(out, "  token:   %s\n", res.queue.Token)
+		fmt.Fprintf(out, "  url:     %s\n", res.queue.ConnectionURL)
+		fmt.Fprintf(out, "  tier:    %s  |  storage: %d MB\n",
 			res.queue.Tier, res.queue.Limits.StorageMB)
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
-	fmt.Println("Copy the URLs above into your .env file or secret manager.")
+	fmt.Fprintln(out, "Copy the URLs above into your .env file or secret manager.")
 	if res.db != nil && res.db.Tier == "anonymous" {
-		fmt.Println()
-		fmt.Println("These are anonymous (24h TTL). Claim them permanently at https://instant.dev")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "These are anonymous (24h TTL). Claim them permanently at https://instant.dev")
 	}
+	return nil
 }
