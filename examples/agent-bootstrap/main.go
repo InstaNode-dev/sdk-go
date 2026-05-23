@@ -25,6 +25,16 @@ import (
 
 const envFile = ".env"
 
+// envVars maps .env keys to their description.
+// The agent writes these on first run; the developer checks them in (or into
+// their secret manager). Kept as the canonical key set the bootstrap manages.
+var envVars = map[string]string{
+	"DATABASE_URL":    "",
+	"REDIS_URL":       "",
+	"NATS_URL":        "",
+	"INSTANT_API_KEY": "", // filled by user after claiming
+}
+
 func main() {
 	ctx := context.Background()
 	client := instant.New()

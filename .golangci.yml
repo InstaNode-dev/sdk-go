@@ -19,6 +19,15 @@ linters:
   settings:
     gocyclo:
       min-complexity: 20
+    errcheck:
+      # Writes to an io.Writer / stdout in CLI + example programs can't
+      # meaningfully recover from a failed write; the idiomatic Go pattern
+      # leaves these unchecked. Excluding the fmt.Fprint* family keeps the
+      # gate focused on errors that matter (resource cleanup, I/O setup).
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
   exclusions:
     rules:
       - path: _test\.go
