@@ -542,8 +542,54 @@ func TestAbsoluteURL(t *testing.T) {
 func TestClaim(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := decodeJSONBody(t, r.Body)
-		if body["jwt"] != "ey.j.j" || body["email"] != "a@b.c" || body["team_name"] != "Acme" {
+		// Canonical wire field is `token` (api ClaimRequest, 2026-05-20).
+		// The SDK must never send the deprecated `jwt` alias even when the
+		// caller supplied the deprecated [ClaimOpts.JWT] field.
+		if _, hasJWT := body["jwt"]; hasJWT {
+			t.Errorf("body must not contain deprecated `jwt` field; got %+v", body)
+		}
+		if body["token"] != "ey.j.j" || body["email"] != "a@b.c" || body["team_name"] != "Acme" {
 			t.Errorf("body = %+v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":            true,
+			"team_id":       "T",
+			"user_id":       "U",
+			"session_token": "sess.jwt.tok",
+			"message":       "ok",
+		})
+	}))
+	defer srv.Close()
+	c := New(WithBaseURL(srv.URL))
+	r, err := c.Claim(context.Background(), ClaimOpts{Token: "ey.j.j", Email: "a@b.c", TeamName: "Acme"})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if r.TeamID != "T" {
+		t.Errorf("TeamID = %q", r.TeamID)
+	}
+	if r.SessionToken != "sess.jwt.tok" {
+		t.Errorf("SessionToken = %q, want sess.jwt.tok", r.SessionToken)
+	}
+	if _, err := c.Claim(context.Background(), ClaimOpts{Email: "x"}); err == nil {
+		t.Error("missing Token should error")
+	}
+	if _, err := c.Claim(context.Background(), ClaimOpts{Token: "x"}); err == nil {
+		t.Error("missing Email should error")
+	}
+}
+
+// TestClaim_JWTFieldBackwardCompat — the deprecated [ClaimOpts.JWT] field is
+// still accepted as a fallback so existing call sites compile unchanged, but
+// the wire body must still send the canonical `token` field.
+func TestClaim_JWTFieldBackwardCompat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeJSONBody(t, r.Body)
+		if _, hasJWT := body["jwt"]; hasJWT {
+			t.Errorf("body must not contain deprecated `jwt` field; got %+v", body)
+		}
+		if body["token"] != "legacy.jwt.val" {
+			t.Errorf("token field = %v, want legacy.jwt.val", body["token"])
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true, "team_id": "T", "user_id": "U", "message": "ok",
@@ -551,18 +597,34 @@ func TestClaim(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(WithBaseURL(srv.URL))
-	r, err := c.Claim(context.Background(), ClaimOpts{JWT: "ey.j.j", Email: "a@b.c", TeamName: "Acme"})
+	// Caller supplies legacy JWT field; SDK must translate to canonical wire.
+	_, err := c.Claim(context.Background(), ClaimOpts{JWT: "legacy.jwt.val", Email: "a@b.c"})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if r.TeamID != "T" {
-		t.Errorf("TeamID = %q", r.TeamID)
-	}
-	if _, err := c.Claim(context.Background(), ClaimOpts{Email: "x"}); err == nil {
-		t.Error("missing JWT should error")
-	}
-	if _, err := c.Claim(context.Background(), ClaimOpts{JWT: "x"}); err == nil {
-		t.Error("missing Email should error")
+}
+
+// TestClaim_TokenWinsOverJWT — when both fields are set, the canonical
+// Token field takes precedence (mirrors api ClaimRequest.claimToken).
+func TestClaim_TokenWinsOverJWT(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeJSONBody(t, r.Body)
+		if body["token"] != "canonical.tok" {
+			t.Errorf("token = %v, want canonical.tok (Token must win over JWT)", body["token"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "team_id": "T", "user_id": "U", "message": "ok",
+		})
+	}))
+	defer srv.Close()
+	c := New(WithBaseURL(srv.URL))
+	_, err := c.Claim(context.Background(), ClaimOpts{
+		Token: "canonical.tok",
+		JWT:   "deprecated.tok",
+		Email: "a@b.c",
+	})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
 	}
 }
 

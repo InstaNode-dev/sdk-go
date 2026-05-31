@@ -5,6 +5,28 @@ All notable changes to the Go SDK for instanode.dev are documented here.
 The SDK follows semver: minor bumps add new API surface, major bumps break
 existing callers.
 
+## Unreleased
+
+### Fixed
+
+- **`Client.Claim` now sends the canonical `token` wire field instead of the
+  deprecated `jwt` alias.** The api ClaimRequest doc names the Go SDK as one
+  of three drift sources for the legacy `jwt` name (alongside the dashboard
+  and MCP). The server still accepts both, so this is wire-compatible, but
+  closes the drift.
+
+### Added
+
+- **`ClaimResult.SessionToken`** (`string`, `json:"session_token,omitempty"`).
+  Populated when the api mints a session JWT for the newly created team on
+  `POST /claim`. Callers can use it as the Bearer token for follow-up
+  authenticated requests with no separate login round-trip. 24h TTL.
+- **`ClaimOpts.Token`** (`string`, `json:"token,omitempty"`) — canonical
+  onboarding-token field, mirrors api `ClaimRequest.Token`. The existing
+  `ClaimOpts.JWT` field is retained as a deprecated fallback (no JSON tag —
+  read-only by the SDK on the client side); new callers should use `Token`.
+  When both are set, `Token` wins.
+
 ## v0.3.0 — 2026-05-20 (BugBash B17)
 
 ### Fixed

@@ -463,10 +463,11 @@ func TestClaim_Success(t *testing.T) {
 		}
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
-		if body["jwt"] == "" || body["email"] == "" {
+		// Canonical wire field is `token` (api ClaimRequest, 2026-05-20).
+		if body["token"] == "" || body["email"] == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
-				"error":   "missing_fields",
-				"message": "jwt and email are required",
+				"error":   "missing_token",
+				"message": "token and email are required",
 			})
 			return
 		}
@@ -480,7 +481,7 @@ func TestClaim_Success(t *testing.T) {
 
 	client := serve(t, mux)
 	result, err := client.Claim(context.Background(), instant.ClaimOpts{
-		JWT:      "test-jwt",
+		Token:    "test-jwt",
 		Email:    "dev@example.com",
 		TeamName: "Test Corp",
 	})
