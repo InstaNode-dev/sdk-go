@@ -7,22 +7,29 @@ import (
 
 // Claim converts an anonymous session into a registered team account.
 //
-// The JWT is the onboarding token obtained from the upgrade URL. When
+// The Token is the onboarding token obtained from the upgrade URL. When
 // instanode.dev provisions an anonymous resource it returns a Note field
-// containing a URL like https://instanode.dev/start?t=<jwt>. Extract the
+// containing a URL like https://instanode.dev/start?t=<token>. Extract the
 // "t" query parameter and pass it here.
 //
-// Claim is one-time: anonymous (24h TTL) resources associated with the JWT's
-// fingerprint are transferred to the new team and given a permanent (no-expiry)
-// lifetime on the free tier. No trial period is started — paid tiers (hobby,
-// pro, team) require a separate Razorpay checkout from the dashboard.
+// Claim is one-time: anonymous (24h TTL) resources associated with the
+// token's fingerprint are transferred to the new team and given a permanent
+// (no-expiry) lifetime on the free tier. No trial period is started — paid
+// tiers (hobby, pro, team) require a separate Razorpay checkout from the
+// dashboard.
 //
-// Returns [*APIError] with StatusCode 409 if the JWT has already been claimed.
+// On success the returned [ClaimResult.SessionToken] holds a freshly minted
+// 24h session JWT for the new team — callers can pass it as the Bearer
+// token on follow-up authenticated requests without a separate login round
+// trip.
+//
+// Returns [*APIError] with StatusCode 409 if the token has already been
+// claimed.
 //
 // Example:
 //
 //	result, err := client.Claim(ctx, instant.ClaimOpts{
-//	    JWT:      upgradeToken,  // from "t" query param of the upgrade URL
+//	    Token:    upgradeToken,  // from "t" query param of the upgrade URL
 //	    Email:    "dev@example.com",
 //	    TeamName: "Acme Corp",   // optional; defaults to email
 //	})
@@ -31,17 +38,22 @@ import (
 //	    return
 //	}
 //	if err != nil { log.Fatal(err) }
-//	fmt.Println("team_id:", result.TeamID)
+//	fmt.Println("team_id:", result.TeamID, "session:", result.SessionToken)
 func (c *Client) Claim(ctx context.Context, opts ClaimOpts) (*ClaimResult, error) {
-	if opts.JWT == "" {
-		return nil, fmt.Errorf("Claim: JWT is required")
+	token := opts.claimToken()
+	if token == "" {
+		return nil, fmt.Errorf("Claim: Token is required")
 	}
 	if opts.Email == "" {
 		return nil, fmt.Errorf("Claim: Email is required")
 	}
 
+	// Canonical wire field is `token` (api ClaimRequest, 2026-05-20). The
+	// legacy `jwt` alias is still server-accepted but documented as
+	// deprecated — SDKs are one of the named drift sources, so we send the
+	// canonical name only.
 	body := map[string]string{
-		"jwt":   opts.JWT,
+		"token": token,
 		"email": opts.Email,
 	}
 	if opts.TeamName != "" {

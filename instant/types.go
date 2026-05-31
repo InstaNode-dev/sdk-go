@@ -154,6 +154,15 @@ type ClaimResult struct {
 	// UserID is the UUID of the newly created user.
 	UserID string `json:"user_id"`
 
+	// SessionToken is a freshly minted session JWT for the newly created
+	// team, suitable for immediate use as the bearer token on follow-up
+	// authenticated requests. Empty when the server elected not to mint one
+	// (e.g. the [Client.ClaimTokens] path that supplies its own API key).
+	//
+	// 24h TTL; re-login on expiry (the API exposes no refresh endpoint).
+	// Treat as a secret.
+	SessionToken string `json:"session_token,omitempty"`
+
 	// Message is a human-readable confirmation message.
 	Message string `json:"message"`
 }
@@ -195,15 +204,41 @@ type ProvisionOpts struct {
 }
 
 // ClaimOpts are the parameters for the Claim method.
+//
+// Field-name policy (matches api ClaimRequest, 2026-05-20): Token is the
+// canonical onboarding-token field. JWT is the deprecated alias kept so
+// existing callers compile unchanged — when both are set, Token wins. New
+// code should set Token only. The SDK now sends the canonical `token` wire
+// field on every request, closing the three-name drift (jwt / token /
+// INSTANODE_TOKEN) the api ClaimRequest doc explicitly flags.
 type ClaimOpts struct {
-	// JWT is the onboarding token obtained from the upgrade URL query parameter (required).
-	JWT string `json:"jwt"`
+	// Token is the canonical onboarding token obtained from the upgrade URL
+	// query parameter "t" (required when JWT is unset).
+	Token string `json:"token,omitempty"`
+
+	// JWT is the deprecated alias for Token. Provided for backward
+	// compatibility with existing code; new callers should use Token.
+	// When both are set, Token wins.
+	//
+	// Deprecated: use Token.
+	JWT string `json:"-"`
 
 	// Email is the user's email address (required).
 	Email string `json:"email"`
 
 	// TeamName is an optional team name. Defaults to the email if not provided.
 	TeamName string `json:"team_name,omitempty"`
+}
+
+// claimToken returns the canonical onboarding token from a ClaimOpts,
+// preferring the new Token field and falling back to the deprecated JWT
+// field. Centralised so every read site agrees on the precedence (mirrors
+// api/internal/handlers/onboarding.go: ClaimRequest.claimToken).
+func (o ClaimOpts) claimToken() string {
+	if o.Token != "" {
+		return o.Token
+	}
+	return o.JWT
 }
 
 // APIError is returned when the server responds with a 4xx or 5xx status code.

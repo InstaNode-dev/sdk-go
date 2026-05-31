@@ -79,7 +79,7 @@ func ExampleClient_Claim() {
 	client := instant.New(instant.WithBaseURL("http://localhost:30080"))
 
 	result, err := client.Claim(ctx, instant.ClaimOpts{
-		JWT:      "eyJhbGci...", // from ?t= query param on the upgrade URL
+		Token:    "eyJhbGci...", // from ?t= query param on the upgrade URL
 		Email:    "dev@example.com",
 		TeamName: "Acme Corp",
 	})
