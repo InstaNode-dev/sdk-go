@@ -265,12 +265,16 @@ if instant.IsNotFound(err) {
 
 ## Tier limits
 
-| Tier | Postgres | Redis | MongoDB |
-|---|---|---|---|
-| anonymous | 10 MB / 2 conn | 5 MB | 5 MB / 2 conn |
-| hobby | 500 MB / 5 conn | 25 MB | 100 MB / 5 conn |
-| pro | 5 120 MB / 20 conn | 256 MB | 2 048 MB / 20 conn |
-| team | unlimited | unlimited | unlimited |
+| Tier | Postgres | Redis | MongoDB | Price |
+|---|---|---|---|---|
+| anonymous | 10 MB / 2 conn | 5 MB | 5 MB / 2 conn | free, 24h TTL |
+| hobby | 1 GB / 8 conn | 50 MB | 100 MB / 5 conn | $9 / mo |
+| pro | 10 GB / 20 conn | 512 MB | 5 GB / 20 conn | $49 / mo |
+
+Limits come from the live plan registry, not the SDK — see
+[instanode.dev/pricing](https://instanode.dev/pricing) for the canonical, always-current
+table (including the intermediate upsell tiers). Anonymous resources expire after 24h;
+claim them with a free account to keep them.
 
 ---
 
