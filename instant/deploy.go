@@ -24,18 +24,21 @@ type Deployment struct {
 	// URL is the live HTTPS endpoint. Empty until Status reaches "healthy".
 	URL string `json:"url"`
 
-	// Status is the lifecycle state of the deployment. The API emits any of:
-	//   "queued"     — accepted, not yet picked up by a builder
+	// Status is the lifecycle state of the deployment. The API contract
+	// (OpenAPI DeploymentItem.status enum) emits exactly one of:
 	//   "building"   — Kaniko is building the image
 	//   "deploying"  — image built; k8s Deployment is rolling out
-	//   "succeeded"  — terminal alias for "healthy" emitted by some build paths
 	//   "healthy"    — pod is Ready and serving on Port
 	//   "failed"     — build or rollout failed; see logs for cause
-	//   "stopped"    — deploy was administratively stopped or paused
+	//   "stopped"    — deploy was administratively stopped or paused (scaled to zero)
+	//   "expired"    — 24h TTL elapsed; the teardown reconciler will reap it
 	//
-	// Callers branching on Status should default unknown values to
-	// "still in flight" rather than failing — the API may grow this set over
-	// time. Use [Deployment.URL] != "" as the canonical "deploy is live" gate.
+	// There is no "queued" or "succeeded" status — the API never emits them.
+	// "healthy" is the live-and-serving terminal-success state (do not branch
+	// on "succeeded"). Still, callers branching on Status should default
+	// unknown values to "still in flight" rather than failing — the API may
+	// grow this set over time. Use [Deployment.URL] != "" as the canonical
+	// "deploy is live" gate.
 	Status string `json:"status"`
 
 	// Tier is the plan tier the deploy was created under.
