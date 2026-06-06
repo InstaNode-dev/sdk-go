@@ -14,6 +14,18 @@ existing callers.
   of three drift sources for the legacy `jwt` name (alongside the dashboard
   and MCP). The server still accepts both, so this is wire-compatible, but
   closes the drift.
+- **`Deployment.Status` doc comment now matches the API contract.** It
+  previously claimed the API emits `"queued"` (accepted-not-yet-built) and
+  `"succeeded"` (terminal alias for healthy). Neither is in the OpenAPI
+  `DeploymentItem.status` enum
+  (`["building","deploying","healthy","failed","stopped","expired"]`) nor in
+  any api code path — they were fictional, so a caller writing
+  `if d.Status == "succeeded"` had a branch that never fired. The doc now
+  lists exactly the contract statuses (and adds the previously-omitted
+  `"expired"`). A registry-honesty test
+  (`TestDeploymentStatusDocMatchesAPIContract`) parses the field's doc
+  comment from the AST and fails if either ghost status reappears or a
+  contract status is dropped. No wire/behavior change.
 
 ### Added
 
