@@ -171,8 +171,16 @@ func (c *Client) Deploy(ctx context.Context, opts DeployOpts) (*Deployment, erro
 		return nil, fmt.Errorf("instant: closing multipart writer: %w", err)
 	}
 
+	// Deploy is a synchronous create like the /*/new provisioning endpoints:
+	// the API blocks while the Kaniko build is kicked off and the row is
+	// written. Use the provisioning client (no 30 s read-path cap) plus the
+	// longer provisioning deadline so a slow accept under load doesn't time out
+	// client-side and strand the build behind a 409 idempotency conflict.
+	pctx, cancel := c.provisionContext(ctx)
+	defer cancel()
+
 	url := c.baseURL + "/deploy/new"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
+	req, err := http.NewRequestWithContext(pctx, http.MethodPost, url, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("instant: building deploy request: %w", err)
 	}
@@ -181,7 +189,7 @@ func (c *Client) Deploy(ctx context.Context, opts DeployOpts) (*Deployment, erro
 		req.Header.Set("Idempotency-Key", opts.IdempotencyKey)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.provisionClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("instant: deploy request failed: %w", err)
 	}

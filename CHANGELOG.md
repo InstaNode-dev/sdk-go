@@ -7,8 +7,46 @@ existing callers.
 
 ## Unreleased
 
+### Added
+
+- **`CreateStack` + `GetStack` — the anonymous deploy path.** `Deploy`
+  (`POST /deploy/new`) requires an API key, so an unauthenticated agent could
+  not deploy through the SDK at all. `CreateStack` wraps `POST /stacks/new`,
+  which accepts anonymous callers (a single-service stack is a complete app),
+  closing the biggest gap surfaced by the live SDK durability probe. The SDK
+  synthesises the `instant.yaml` manifest from `[]StackServiceSpec`
+  (name/tarball/port/expose/needs/env) and uploads it with each service's
+  tarball as `multipart/form-data`. The call is asynchronous (returns
+  `Status:"building"`); `GetStack(ctx, slug)` polls status + per-service URLs.
+  Both run on the 120 s provisioning client (stacks build pods). Errors surface
+  as `*APIError` so callers can branch on 402 (tier gate) / 429 (anon cap) / 404.
+- **`ProvisionVector` — pgvector-enabled Postgres (`POST /vector/new`).** Mirrors
+  `ProvisionDatabase` and adds an optional `Dimensions` hint (0 → server default
+  1536). Returns a `VectorResult` (embeds `ProvisionResult`) with the extra
+  `Extension` (`"pgvector"`) and `Dimensions` fields the endpoint echoes.
+- **`DeploymentEvents` — the deploy failure-autopsy timeline
+  (`GET /api/v1/deployments/:id/events`).** Returns the captured build exit
+  reason, last log lines, and remediation hint per event so an agent can read
+  why a deploy failed and self-correct instead of re-uploading a broken build.
+  `ExitCode` is a `*int32` so a null exit code is distinguishable from a real 0.
+
 ### Fixed
 
+- **Provisioning + deploy calls now default to a 120 s per-request timeout
+  (reads stay at 30 s).** Provisioning is synchronous server-side: `POST /db/new`
+  (and the other `/*/new` endpoints plus `/deploy/new`) blocks while the real
+  Postgres / Redis / Mongo / NATS / bucket / pod is created. Under prod hot-pool
+  contention a *fresh* Postgres provision can exceed the old 30 s client timeout;
+  when the client gave up the server kept working and held a 60 s in-flight
+  idempotency marker, so the caller's retry hit `409 idempotency_key_in_progress`
+  instead of succeeding. The provisioning + deploy paths now run on a dedicated
+  HTTP client with no client-wide cap and a 120 s per-request context deadline,
+  comfortably outliving both the slow provision and the server's in-flight
+  window. Read calls (list/get/claim/delete/rotate) are unchanged at 30 s.
+  `WithTimeout` still overrides both (it now governs the provisioning deadline
+  too), and a tighter deadline on the caller's `context.Context` is always
+  honoured — the SDK only lengthens an open-ended context, never overrides a
+  shorter caller deadline.
 - **`Client.Claim` now sends the canonical `token` wire field instead of the
   deprecated `jwt` alias.** The api ClaimRequest doc names the Go SDK as one
   of three drift sources for the legacy `jwt` name (alongside the dashboard

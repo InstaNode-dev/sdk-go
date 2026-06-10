@@ -57,12 +57,16 @@ func main() {
 | `ProvisionCache` | `(ctx, *ProvisionOpts) (*ProvisionResult, error)` | Redis cache namespace |
 | `ProvisionMongoDB` | `(ctx, *ProvisionOpts) (*ProvisionResult, error)` | MongoDB database + scoped user |
 | `ProvisionQueue` | `(ctx, *ProvisionOpts) (*ProvisionResult, error)` | NATS JetStream stream |
+| `ProvisionVector` | `(ctx, *VectorOpts) (*VectorResult, error)` | pgvector-enabled Postgres (POST /vector/new) |
 
 ### Deployment
 
 | Method | Signature | Description |
 |---|---|---|
-| `Deploy` | `(ctx, DeployOpts) (*Deployment, error)` | Build + deploy an app from a gzipped tarball (POST /deploy/new) |
+| `Deploy` | `(ctx, DeployOpts) (*Deployment, error)` | Build + deploy a single app from a gzipped tarball (POST /deploy/new — requires an API key) |
+| `CreateStack` | `(ctx, CreateStackOpts) (*Stack, error)` | Deploy a multi-service stack (POST /stacks/new — the **anonymous** deploy path; works without an API key) |
+| `GetStack` | `(ctx, slug string) (*Stack, error)` | Poll a stack's status + per-service URLs (GET /stacks/:slug) |
+| `DeploymentEvents` | `(ctx, id string, limit int) (*DeploymentEventList, error)` | Failure-autopsy timeline for a deploy (GET /api/v1/deployments/:id/events) |
 
 ### Resource Management (requires API key)
 
@@ -107,10 +111,44 @@ mdb, err := client.ProvisionMongoDB(ctx, &instant.ProvisionOpts{Name: "app-mongo
 // NATS JetStream
 q, err := client.ProvisionQueue(ctx, &instant.ProvisionOpts{Name: "app-queue"})
 // q.ConnectionURL → nats://usr:pass@host:4222
+
+// pgvector (embeddings) — same as Postgres, plus a dimensions hint
+vdb, err := client.ProvisionVector(ctx, &instant.VectorOpts{
+    ProvisionOpts: instant.ProvisionOpts{Name: "embeddings"},
+    Dimensions:    1536, // 0 → server default (1536)
+})
+// vdb.ConnectionURL → postgres://...  vdb.Extension → "pgvector"  vdb.Dimensions
 ```
 
 Anonymous resources expire after **24 hours**. Claim them permanently with a free account
 (see [Claim](#claim) below or visit the URL in `result.Note`).
+
+### Timeouts: provisioning runs longer than reads
+
+Provisioning is **synchronous** — `ProvisionDatabase` / `Cache` / `MongoDB` /
+`Queue` / `Vector` / `Storage` / `Webhook`, `Deploy`, and `CreateStack` block
+while the API creates the real backend (or accepts the build). Under production
+hot-pool contention a *fresh* Postgres provision
+can take **more than 30 seconds**. If the client gave up at 30 s, the server
+kept working and held a 60 s in-flight idempotency marker, so the next retry hit
+`409 idempotency_key_in_progress` instead of succeeding.
+
+To avoid that, the SDK gives provisioning + deploy calls a **120 s** per-request
+deadline by default, while read calls (list, get, claim, delete, rotate) keep
+the shorter **30 s** default. You do not need to do anything — the split is
+automatic.
+
+Override either with `WithTimeout`, which sets a single budget governing **both**
+read and provisioning calls:
+
+```go
+// One 90 s budget for every call — set high enough to outlive a slow provision.
+client := instant.New(instant.WithTimeout(90 * time.Second))
+```
+
+A deadline you set on the `context.Context` you pass in is always honoured if it
+is *tighter* than the SDK's provisioning budget — the SDK only lengthens an
+open-ended context, it never overrides a shorter caller deadline.
 
 ---
 
@@ -139,12 +177,54 @@ fmt.Println("deploy id:", d.ID, "status:", d.Status, "url:", d.URL)
 `Deployment.Status` is one of `building`, `deploying`, `healthy`, `failed`, `stopped`.
 Poll the deploy by id via the live API to watch it reach a terminal state.
 
+`Deploy` (POST /deploy/new) requires an API key. To deploy **anonymously** — no
+account, exactly like provisioning a database — use `CreateStack` (a single-service
+stack is a complete app):
+
+```go
+f, _ := os.Open("api.tar.gz")
+defer f.Close()
+
+st, err := client.CreateStack(ctx, instant.CreateStackOpts{
+    Name: "my-app",
+    Env:  "production",
+    Services: []instant.StackServiceSpec{{
+        Name:    "api",
+        Tarball: f,
+        Port:    8080,
+        Expose:  true, // public Ingress + TLS
+    }},
+})
+if err != nil { log.Fatal(err) }
+
+// Poll until the build finishes.
+for {
+    st, _ = client.GetStack(ctx, st.Slug)
+    if st.Status != "building" { break }
+    time.Sleep(2 * time.Second)
+}
+for _, svc := range st.Services {
+    fmt.Printf("%s  %s  %s\n", svc.Name, svc.Status, svc.URL)
+}
+```
+
+When a deploy fails, `DeploymentEvents` returns the failure-autopsy timeline (build
+exit reason, last log lines, a remediation hint) so an agent can self-correct:
+
+```go
+evs, _ := client.DeploymentEvents(ctx, d.AppID, 0) // 0 = server default limit
+for _, e := range evs.Events {
+    fmt.Printf("%s/%s: %s\n%s\n", e.Kind, e.Reason, e.Hint, e.LastLines)
+}
+```
+
 ### What's NOT covered yet
 
-This SDK currently exposes a focused slice of the platform surface. The full agent API
-documents ~90+ additional endpoints across deployments management (`GET /deploy/:id`,
+This SDK exposes a focused slice of the platform surface. The full agent API documents
+~90+ additional endpoints across deployments management (`GET /deploy/:id`,
 `PATCH /deploy/:id/env`, `POST /deploy/:id/redeploy`, `DELETE /deploy/:id`, logs SSE),
-multi-service stacks (`POST /stacks/new` and friends), billing (`POST /api/v1/billing/checkout`,
+stack mutation (`PATCH /stacks/:slug/env`, `POST /stacks/:slug/redeploy`,
+`DELETE /stacks/:slug`), billing (`POST /api/v1/billing/checkout`,
 `/api/v1/billing/usage`), team management, env-twin / promotion, vault, audit, webhook
 receivers, custom domains, GitHub App connections, and more.
 
@@ -217,7 +297,7 @@ fmt.Println("team_id:", result.TeamID)
 client := instant.New(
     instant.WithAPIKey("inst_live_..."),           // default: INSTANT_API_KEY env var
     instant.WithBaseURL("http://localhost:8080"),   // default: INSTANT_API_URL or https://api.instanode.dev (port-forward svc/instant-api for local k8s)
-    instant.WithTimeout(15 * time.Second),         // default: 30s
+    instant.WithTimeout(15 * time.Second),         // governs reads AND provisioning; defaults: reads 30s, provisioning 120s
     instant.WithHTTPClient(myClient),              // custom transport (tracing, TLS, etc.)
     instant.WithLogger(slog.Default()),            // advisory notices and upgrade prompts
 )

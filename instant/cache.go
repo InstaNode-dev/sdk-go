@@ -38,7 +38,7 @@ func (c *Client) ProvisionCache(ctx context.Context, opts *ProvisionOpts) (*Prov
 	}
 
 	var result ProvisionResult
-	if err := c.postJSONWithHeaders(ctx, "/cache/new", body, provisionHeaders(opts), &result); err != nil {
+	if err := c.provisionJSONWithHeaders(ctx, "/cache/new", body, provisionHeaders(opts), &result); err != nil {
 		return nil, fmt.Errorf("ProvisionCache: %w", err)
 	}
 	if result.Token == "" {

@@ -47,18 +47,54 @@ const (
 	// TLS, full OpenAPI surface.
 	DefaultBaseURL = "https://api.instanode.dev"
 
-	// defaultTimeout is applied to every HTTP request.
+	// defaultTimeout is the per-request deadline applied to read-style calls
+	// (list, get, claim, delete, rotate). 30 s is plenty for a JSON round trip.
 	defaultTimeout = 30 * time.Second
+
+	// defaultProvisioningTimeout is the per-request deadline applied to the
+	// synchronous provisioning + deploy endpoints.
+	//
+	// Provisioning is synchronous on the server: POST /db/new (and the other
+	// /*/new endpoints, plus /deploy/new) blocks the handler while the real
+	// Postgres / Redis / Mongo / NATS / bucket / pod is created. Under prod
+	// hot-pool contention a *fresh* Postgres provision can exceed 30 s. When
+	// the client gave up at the read-path 30 s the server kept working and
+	// held a 60 s in-flight idempotency marker, so the caller's retry hit
+	// `409 idempotency_key_in_progress` instead of succeeding. A 120 s
+	// provisioning deadline comfortably outlives both the slow provision and
+	// the server's in-flight window, so the first call returns the resource
+	// rather than orphaning it behind a conflicting retry.
+	//
+	// Overridable: WithTimeout sets an explicit per-request deadline that
+	// governs BOTH read and provisioning calls (see [WithTimeout]).
+	defaultProvisioningTimeout = 120 * time.Second
 )
 
 // Client is the instant.dev API client.
 // Construct one with [New]; all methods are safe for concurrent use.
 type Client struct {
-	baseURL    string
-	apiKey     string
+	baseURL string
+	apiKey  string
+
+	// httpClient governs read-style calls. Its Timeout is the read-path
+	// per-request deadline (defaultTimeout unless WithTimeout overrides it).
 	httpClient *http.Client
-	userAgent  string
-	logger     *slog.Logger
+
+	// provisionClient governs the synchronous provisioning + deploy calls. It
+	// shares httpClient's transport (so WithHTTPClient's transport chaining,
+	// auth header, and User-Agent all apply identically) but carries no
+	// client-wide Timeout cap — the per-request provisioning deadline is
+	// enforced via the request context instead. This lets provisioning run for
+	// up to provisionTimeout even though reads stay capped at the shorter
+	// read-path Timeout.
+	provisionClient *http.Client
+
+	// provisionTimeout is the per-request deadline applied to provisioning +
+	// deploy calls (defaultProvisioningTimeout unless WithTimeout overrides it).
+	provisionTimeout time.Duration
+
+	userAgent string
+	logger    *slog.Logger
 }
 
 // Option configures a [Client]. Pass options to [New].
@@ -101,9 +137,22 @@ func WithHTTPClient(hc *http.Client) Option {
 	}
 }
 
-// WithTimeout sets the per-request HTTP timeout. Default is 30 s.
+// WithTimeout sets the per-request HTTP timeout.
+//
+// It governs BOTH read-style calls and the synchronous provisioning / deploy
+// calls. Without this option reads default to 30 s and provisioning defaults to
+// 120 s (synchronous provisioning can exceed 30 s under prod hot-pool
+// contention — see [defaultProvisioningTimeout]). Passing WithTimeout collapses
+// both onto the single value you supply, so set it high enough to outlive a
+// slow provision if you provision through this client:
+//
+//	// give every call — reads and provisioning alike — a 90 s budget
+//	client := instant.New(instant.WithTimeout(90 * time.Second))
 func WithTimeout(d time.Duration) Option {
-	return func(c *Client) { c.httpClient.Timeout = d }
+	return func(c *Client) {
+		c.httpClient.Timeout = d
+		c.provisionTimeout = d
+	}
 }
 
 // WithLogger sets the structured logger used for advisory notices and upgrade prompts.
@@ -127,6 +176,10 @@ func New(opts ...Option) *Client {
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
+		// 0 is the "not explicitly set" sentinel. WithTimeout overwrites it;
+		// otherwise it is resolved below to either the default provisioning
+		// timeout or a caller-supplied WithHTTPClient Timeout.
+		provisionTimeout: 0,
 	}
 
 	// Environment defaults (explicit options below override these)
@@ -139,6 +192,21 @@ func New(opts ...Option) *Client {
 
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// Resolve the provisioning deadline. Precedence:
+	//  1. WithTimeout — already stamped both httpClient.Timeout and
+	//     provisionTimeout to the caller's explicit value (non-zero here).
+	//  2. WithHTTPClient with a non-zero Timeout — the caller set a deliberate
+	//     per-request budget on their own client; honour it for provisioning
+	//     too rather than silently widening it to 120 s.
+	//  3. Neither — provisioning gets the 120 s default while reads keep 30 s.
+	if c.provisionTimeout == 0 {
+		if c.httpClient.Timeout != defaultTimeout && c.httpClient.Timeout > 0 {
+			c.provisionTimeout = c.httpClient.Timeout
+		} else {
+			c.provisionTimeout = defaultProvisioningTimeout
+		}
 	}
 
 	// Wire the auth transport on top of whatever the caller supplied. We
@@ -154,19 +222,53 @@ func New(opts ...Option) *Client {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	wrapped := &http.Client{
+	sharedTransport := &authTransport{
+		base:      base,
+		apiKey:    c.apiKey,
+		userAgent: c.userAgent,
+	}
+	c.httpClient = &http.Client{
 		Timeout:       c.httpClient.Timeout,
 		CheckRedirect: c.httpClient.CheckRedirect,
 		Jar:           c.httpClient.Jar,
-		Transport: &authTransport{
-			base:      base,
-			apiKey:    c.apiKey,
-			userAgent: c.userAgent,
-		},
+		Transport:     sharedTransport,
 	}
-	c.httpClient = wrapped
+
+	// provisionClient shares the same (auth-wrapped) transport but carries NO
+	// client-wide Timeout. Provisioning deadlines are enforced per-request via
+	// the request context (see provisionContext) so a slow synchronous
+	// provision can run for the full provisionTimeout instead of being killed
+	// at the shorter read-path Timeout. CheckRedirect / Jar are preserved so
+	// the two clients behave identically apart from the timeout cap.
+	c.provisionClient = &http.Client{
+		Timeout:       0,
+		CheckRedirect: c.httpClient.CheckRedirect,
+		Jar:           c.httpClient.Jar,
+		Transport:     sharedTransport,
+	}
 
 	return c
+}
+
+// provisionContext derives a child context carrying the provisioning deadline.
+//
+// It never *extends* a deadline the caller already set: if ctx already has an
+// earlier deadline (the caller passed context.WithTimeout themselves) that
+// tighter deadline wins. It only adds the provisioning budget when the caller
+// left the context open-ended. The returned cancel func must always be called.
+func (c *Client) provisionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := c.provisionTimeout
+	if d <= 0 {
+		d = defaultProvisioningTimeout
+	}
+	if existing, ok := ctx.Deadline(); ok {
+		// Caller set their own deadline; only shorten ours to honour it, never
+		// override a tighter caller budget.
+		if remaining := time.Until(existing); remaining <= d {
+			return context.WithCancel(ctx)
+		}
+	}
+	return context.WithTimeout(ctx, d)
 }
 
 // ─── internal HTTP helpers ────────────────────────────────────────────────────
@@ -187,17 +289,43 @@ func (c *Client) postJSON(ctx context.Context, path string, body any, out any) e
 }
 
 // postJSONWithHeaders is like postJSON but also sets extra request headers.
-// Used by the provisioning helpers to forward the optional Idempotency-Key.
+// It runs on the read-path client (defaultTimeout). Provisioning helpers must
+// use provisionJSONWithHeaders instead so the synchronous provision gets the
+// longer provisioning deadline.
 func (c *Client) postJSONWithHeaders(ctx context.Context, path string, body any, headers map[string]string, out any) error {
-	var r io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("marshalling request body: %w", err)
-		}
-		r = bytes.NewReader(b)
+	r, err := jsonBodyReader(body)
+	if err != nil {
+		return err
 	}
 	return c.doWithHeaders(ctx, http.MethodPost, path, r, headers, out)
+}
+
+// provisionJSONWithHeaders POSTs a JSON body for a synchronous provisioning
+// call. It routes through provisionClient (no client-wide Timeout cap) and
+// applies the longer provisioning deadline via the request context, so a slow
+// hot-pool provision can complete instead of timing out at the read-path 30 s
+// and orphaning the resource behind a 409 idempotency_key_in_progress retry.
+func (c *Client) provisionJSONWithHeaders(ctx context.Context, path string, body any, headers map[string]string, out any) error {
+	r, err := jsonBodyReader(body)
+	if err != nil {
+		return err
+	}
+	pctx, cancel := c.provisionContext(ctx)
+	defer cancel()
+	return c.doWithClient(pctx, c.provisionClient, http.MethodPost, path, r, headers, out)
+}
+
+// jsonBodyReader marshals body to a re-readable JSON reader. A nil body yields
+// a nil reader (no Content-Type is set downstream in that case).
+func jsonBodyReader(body any) (io.Reader, error) {
+	if body == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling request body: %w", err)
+	}
+	return bytes.NewReader(b), nil
 }
 
 // delete executes a DELETE request and decodes the JSON response into out.
@@ -211,8 +339,18 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 }
 
 // doWithHeaders is like do but allows the caller to attach extra request
-// headers (e.g. Idempotency-Key). headers may be nil.
+// headers (e.g. Idempotency-Key). headers may be nil. It runs on the read-path
+// httpClient (read-path Timeout).
 func (c *Client) doWithHeaders(ctx context.Context, method, path string, body io.Reader, headers map[string]string, out any) error {
+	return c.doWithClient(ctx, c.httpClient, method, path, body, headers, out)
+}
+
+// doWithClient executes an HTTP request on the supplied client, retrying once
+// on a transport error or 5xx. It is the shared core behind doWithHeaders
+// (read path) and provisionJSONWithHeaders (provisioning path); the only
+// difference between the two is the *http.Client (hence the timeout regime)
+// and the request context.
+func (c *Client) doWithClient(ctx context.Context, hc *http.Client, method, path string, body io.Reader, headers map[string]string, out any) error {
 	rawURL := c.baseURL + path
 
 	// If we have a body reader we need to be able to re-read it on retry.
@@ -246,7 +384,7 @@ func (c *Client) doWithHeaders(ctx context.Context, method, path string, body io
 			}
 		}
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := hc.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("request failed: %w", err)
 			if attempt == 0 {
