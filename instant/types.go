@@ -243,29 +243,119 @@ func (o ClaimOpts) claimToken() string {
 
 // APIError is returned when the server responds with a 4xx or 5xx status code.
 // It implements the error interface so it can be used directly in error comparisons.
+//
+// The instanode.dev API replies to every error with the canonical envelope:
+//
+//	{
+//	  "ok": false,
+//	  "error": "unauthorized",                 // category (Code below)
+//	  "error_code": "missing_credentials",      // canonical machine code (ErrorCode below)
+//	  "message": "...",                          // human-readable description
+//	  "agent_action": "Have the user log in ...",// LLM-ready next step
+//	  "upgrade_url": "https://instanode.dev/...",// where to upgrade/claim, if applicable
+//	  "retry_after_seconds": 30,                 // null on 4xx, set on 429/502/503/504
+//	  "request_id": "req_..."                    // correlation id for support
+//	}
+//
+// Every field above has a home on this struct so the agent-native contract
+// (machine code + the next action to take + where to upgrade) survives the
+// round trip. APIErrorEnvelopeKeys is the authoritative list of envelope keys
+// the SDK maps; a registry test asserts each one round-trips so a future API
+// field can't be silently dropped.
 type APIError struct {
 	// StatusCode is the HTTP status code returned by the server.
 	StatusCode int
 
-	// Code is the machine-readable error code from the server (e.g. "not_found").
+	// Code is the error category from the server's "error" field
+	// (e.g. "unauthorized", "not_found"). For the canonical machine-readable
+	// code, prefer [APIError.CanonicalCode], which returns ErrorCode when the
+	// server supplied the finer-grained "error_code" field and falls back to
+	// this category otherwise.
 	Code string `json:"error"`
+
+	// ErrorCode is the canonical machine-readable error code from the server's
+	// "error_code" field (e.g. "missing_credentials"). It is finer-grained than
+	// Code (the category). Empty when the server only sent the category.
+	ErrorCode string `json:"error_code"`
 
 	// Message is the human-readable error description.
 	Message string `json:"message"`
+
+	// AgentAction is the LLM-ready next step the API recommends — a full
+	// sentence an agent can relay to the user, usually carrying a concrete
+	// instanode.dev URL. Empty when the server did not supply one.
+	AgentAction string `json:"agent_action"`
+
+	// UpgradeURL points at the page where the user can upgrade their plan or
+	// claim their resources to clear the error. Empty when not applicable.
+	UpgradeURL string `json:"upgrade_url"`
+
+	// RetryAfterSeconds is the number of seconds the client should wait before
+	// retrying. It is a pointer so the SDK can distinguish "retry in 0s" from
+	// "do not retry" (null). Non-nil on 429/502/503/504; nil on 4xx that the
+	// caller must fix rather than retry.
+	RetryAfterSeconds *int `json:"retry_after_seconds"`
+
+	// RequestID is the server-side correlation id for this request. Include it
+	// when contacting support so the request can be traced.
+	RequestID string `json:"request_id"`
 
 	// raw is the full response body for debugging.
 	raw string
 }
 
-// Error implements the error interface.
+// APIErrorEnvelopeKeys is the authoritative list of JSON keys the
+// instanode.dev error envelope can emit that this SDK maps onto [APIError].
+// Every key here MUST have a tagged field on APIError; the registry test
+// (TestAPIError_EnvelopeKeysAllHaveAHome) iterates this list against the
+// struct tags so a newly added API field can't silently drop. When the API
+// adds an envelope key, add it here AND give it a tagged field on APIError in
+// the same change.
+//
+// claim_url is intentionally excluded: it is a recycle-gate-only alias of
+// upgrade_url and the SDK folds that surface into UpgradeURL.
+var APIErrorEnvelopeKeys = []string{
+	"error",
+	"error_code",
+	"message",
+	"agent_action",
+	"upgrade_url",
+	"retry_after_seconds",
+	"request_id",
+}
+
+// CanonicalCode returns the most specific machine-readable error code the
+// server supplied: the finer-grained ErrorCode ("error_code") when present,
+// falling back to the Code category ("error") otherwise. Branch on this rather
+// than on Code directly so a caller keying off "missing_credentials" keeps
+// working even though the category is the coarser "unauthorized".
+func (e *APIError) CanonicalCode() string {
+	if e.ErrorCode != "" {
+		return e.ErrorCode
+	}
+	return e.Code
+}
+
+// Error implements the error interface. The canonical machine code, the
+// human message, and — when the server supplied them — the agent_action and
+// upgrade_url are folded into one line so a log entry is actionable without a
+// second lookup.
 func (e *APIError) Error() string {
-	if e.Code != "" {
-		return fmt.Sprintf("instant.dev API error %d (%s): %s", e.StatusCode, e.Code, e.Message)
+	var s string
+	if code := e.CanonicalCode(); code != "" {
+		s = fmt.Sprintf("instant.dev API error %d (%s): %s", e.StatusCode, code, e.Message)
+	} else if e.raw != "" {
+		s = fmt.Sprintf("instant.dev API error %d: %s", e.StatusCode, e.raw)
+	} else {
+		s = fmt.Sprintf("instant.dev API error %d", e.StatusCode)
 	}
-	if e.raw != "" {
-		return fmt.Sprintf("instant.dev API error %d: %s", e.StatusCode, e.raw)
+	if e.AgentAction != "" {
+		s += " | agent_action: " + e.AgentAction
 	}
-	return fmt.Sprintf("instant.dev API error %d", e.StatusCode)
+	if e.UpgradeURL != "" {
+		s += " | upgrade_url: " + e.UpgradeURL
+	}
+	return s
 }
 
 // IsNotFound reports whether the error is a 404 Not Found.

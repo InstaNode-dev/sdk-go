@@ -26,8 +26,38 @@ existing callers.
   (`TestDeploymentStatusDocMatchesAPIContract`) parses the field's doc
   comment from the AST and fails if either ghost status reappears or a
   contract status is dropped. No wire/behavior change.
+- **P0: `APIError` no longer drops the agent-native error envelope.** The api
+  replies to every 4xx/5xx with
+  `{ok, error, error_code, message, agent_action, upgrade_url,
+  retry_after_seconds, request_id}`, but `APIError` captured only `error` +
+  `message` — silently dropping `agent_action`, `error_code`, `upgrade_url`,
+  `retry_after_seconds`, and `request_id`. Worse, `Code` was tagged
+  `json:"error"` so it held the *category* (`"unauthorized"`) rather than the
+  canonical machine code (`"missing_credentials"` in `error_code`). All five
+  dropped fields now have tagged homes: `ErrorCode`, `AgentAction`,
+  `UpgradeURL`, `RetryAfterSeconds *int`, `RequestID`. `Code`/`Message` are
+  retained for back-compat. New `APIError.CanonicalCode()` returns the
+  finer-grained `ErrorCode`, falling back to `Code`. `Error()` now folds
+  `agent_action` + `upgrade_url` into the string so logs are actionable; the
+  legacy `(code): message` shape is unchanged when neither is present. A
+  registry test (`TestAPIError_EnvelopeKeysAllHaveAHome` +
+  `…RegistryIsComplete`) asserts every envelope key the API can emit has a
+  tagged field and round-trips, so a future field can't silently drop.
 
 ### Added
+
+- **`Client.Capabilities(ctx)`** → `GET /api/v1/capabilities`. Returns the full
+  tier matrix (`*Capabilities` with typed `[]TierCapabilities`: storage,
+  connection, resource-count, and deployment caps per tier, plus durability
+  and pricing) so an agent can discover "what can I do at which tier" without
+  provisioning-and-failing. Public/unauthenticated — works in anonymous mode.
+  The complete decoded JSON is also preserved on `Capabilities.Raw` for
+  forward compatibility. Six provider doc comments already referenced this
+  endpoint; this is the first method that calls it.
+- **`APIError.ErrorCode` / `.AgentAction` / `.UpgradeURL` /
+  `.RetryAfterSeconds` / `.RequestID`** — the previously-dropped error-envelope
+  fields (see Fixed above), plus `APIError.CanonicalCode()` and the exported
+  `APIErrorEnvelopeKeys` registry.
 
 - **`ClaimResult.SessionToken`** (`string`, `json:"session_token,omitempty"`).
   Populated when the api mints a session JWT for the newly created team on
