@@ -1,0 +1,5 @@
+# Domain abbreviations the typos spell-checker mis-flags as misspellings.
+# RTO = Recovery Time Objective, RPO = Recovery Point Objective (durability SLOs).
+[default.extend-words]
+rto = "rto"
+rpo = "rpo"
