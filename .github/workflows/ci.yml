@@ -41,3 +41,21 @@ jobs:
             echo "::error ::SDKVersion=$got does not match tag $tag (expected $expected). Bump instant/version.go before tagging."
             exit 1
           fi
+
+  # Live integration tests against PROD instanode.dev. The `integration` build
+  # tag gates these tests (read-only: an unauthenticated list to verify the
+  # agent-native error envelope, plus the public capabilities matrix). They skip
+  # cleanly if prod is unreachable from the runner, so this job is informative on
+  # an isolated runner but asserts the live envelope contract when reachable.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      - run: go build -tags integration ./...
+      - name: Run live integration tests against prod
+        run: go test -tags integration ./... -v -count=1 -run TestProdIntegration
