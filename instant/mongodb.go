@@ -34,7 +34,7 @@ func (c *Client) ProvisionMongoDB(ctx context.Context, opts *ProvisionOpts) (*Pr
 	}
 
 	var result ProvisionResult
-	if err := c.postJSONWithHeaders(ctx, "/nosql/new", body, provisionHeaders(opts), &result); err != nil {
+	if err := c.provisionJSONWithHeaders(ctx, "/nosql/new", body, provisionHeaders(opts), &result); err != nil {
 		return nil, fmt.Errorf("ProvisionMongoDB: %w", err)
 	}
 	if result.Token == "" {

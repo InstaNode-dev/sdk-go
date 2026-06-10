@@ -137,7 +137,7 @@ func (c *Client) ProvisionStorage(ctx context.Context, opts *ProvisionOpts) (*St
 	}
 
 	var result StorageResult
-	if err := c.postJSONWithHeaders(ctx, storagePath, body, provisionHeaders(opts), &result); err != nil {
+	if err := c.provisionJSONWithHeaders(ctx, storagePath, body, provisionHeaders(opts), &result); err != nil {
 		return nil, fmt.Errorf("ProvisionStorage: %w", err)
 	}
 	if result.Token == "" {

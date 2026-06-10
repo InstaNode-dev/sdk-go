@@ -34,7 +34,7 @@ func (c *Client) ProvisionDatabase(ctx context.Context, opts *ProvisionOpts) (*P
 	}
 
 	var result ProvisionResult
-	if err := c.postJSONWithHeaders(ctx, "/db/new", body, provisionHeaders(opts), &result); err != nil {
+	if err := c.provisionJSONWithHeaders(ctx, "/db/new", body, provisionHeaders(opts), &result); err != nil {
 		return nil, fmt.Errorf("ProvisionDatabase: %w", err)
 	}
 	if result.Token == "" {

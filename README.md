@@ -112,6 +112,32 @@ q, err := client.ProvisionQueue(ctx, &instant.ProvisionOpts{Name: "app-queue"})
 Anonymous resources expire after **24 hours**. Claim them permanently with a free account
 (see [Claim](#claim) below or visit the URL in `result.Note`).
 
+### Timeouts: provisioning runs longer than reads
+
+Provisioning is **synchronous** — `ProvisionDatabase` / `Cache` / `MongoDB` /
+`Queue` / `Storage` / `Webhook` and `Deploy` block while the API creates the
+real backend. Under production hot-pool contention a *fresh* Postgres provision
+can take **more than 30 seconds**. If the client gave up at 30 s, the server
+kept working and held a 60 s in-flight idempotency marker, so the next retry hit
+`409 idempotency_key_in_progress` instead of succeeding.
+
+To avoid that, the SDK gives provisioning + deploy calls a **120 s** per-request
+deadline by default, while read calls (list, get, claim, delete, rotate) keep
+the shorter **30 s** default. You do not need to do anything — the split is
+automatic.
+
+Override either with `WithTimeout`, which sets a single budget governing **both**
+read and provisioning calls:
+
+```go
+// One 90 s budget for every call — set high enough to outlive a slow provision.
+client := instant.New(instant.WithTimeout(90 * time.Second))
+```
+
+A deadline you set on the `context.Context` you pass in is always honoured if it
+is *tighter* than the SDK's provisioning budget — the SDK only lengthens an
+open-ended context, it never overrides a shorter caller deadline.
+
 ---
 
 ## Deploy
@@ -217,7 +243,7 @@ fmt.Println("team_id:", result.TeamID)
 client := instant.New(
     instant.WithAPIKey("inst_live_..."),           // default: INSTANT_API_KEY env var
     instant.WithBaseURL("http://localhost:8080"),   // default: INSTANT_API_URL or https://api.instanode.dev (port-forward svc/instant-api for local k8s)
-    instant.WithTimeout(15 * time.Second),         // default: 30s
+    instant.WithTimeout(15 * time.Second),         // governs reads AND provisioning; defaults: reads 30s, provisioning 120s
     instant.WithHTTPClient(myClient),              // custom transport (tracing, TLS, etc.)
     instant.WithLogger(slog.Default()),            // advisory notices and upgrade prompts
 )
