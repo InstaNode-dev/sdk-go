@@ -53,6 +53,21 @@ type ProvisionResult struct {
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
+// VectorResult is returned by [Client.ProvisionVector]. It is a ProvisionResult
+// plus the two pgvector-specific fields the /vector/new response carries.
+type VectorResult struct {
+	ProvisionResult
+
+	// Extension is the Postgres extension installed on the database — always
+	// "pgvector" for a /vector/new resource.
+	Extension string `json:"extension,omitempty"`
+
+	// Dimensions is the embedding width the server recorded (the value you
+	// supplied, or the server default of 1536 when you left it 0). It is a
+	// hint only — pgvector columns set their own width at table-create time.
+	Dimensions int `json:"dimensions,omitempty"`
+}
+
 // ResourceLimits describes the storage, memory, or connection limits for a provisioned resource.
 type ResourceLimits struct {
 	// StorageMB is the storage limit in megabytes (Postgres, MongoDB, NATS).
@@ -66,6 +81,56 @@ type ResourceLimits struct {
 
 	// ExpiresIn is the TTL for anonymous resources (e.g. "24h").
 	ExpiresIn string `json:"expires_in,omitempty"`
+}
+
+// DeploymentEvent is one row of a deployment's failure-autopsy timeline, as
+// returned by [Client.DeploymentEvents] (GET /api/v1/deployments/:id/events).
+//
+// When a build or rollout fails, the worker captures the build-pod's exit
+// reason, last log lines, and a remediation hint and writes them here — so an
+// agent can read the timeline and self-correct the deploy (rule 27: the
+// silent-deploy-failure autopsy surface).
+type DeploymentEvent struct {
+	// Kind is the event category (e.g. "build", "rollout", "autopsy").
+	Kind string `json:"kind"`
+
+	// Reason is the short machine reason (e.g. "BackoffLimitExceeded",
+	// "DeadlineExceeded", "StartFailed").
+	Reason string `json:"reason"`
+
+	// Event is the raw k8s/build event string this row was distilled from.
+	Event string `json:"event"`
+
+	// ExitCode is the build/container exit code when one was captured. It is a
+	// pointer so a row with no exit code (null on the wire) is distinguishable
+	// from a genuine exit code of 0.
+	ExitCode *int32 `json:"exit_code"`
+
+	// LastLines is the tail of the build/runtime log captured at failure —
+	// usually the most actionable field for diagnosing a broken build.
+	LastLines string `json:"last_lines"`
+
+	// Hint is a human/LLM-ready remediation suggestion the autopsy attached.
+	Hint string `json:"hint"`
+
+	// CreatedAt is the RFC3339 timestamp the event was recorded.
+	CreatedAt string `json:"created_at"`
+}
+
+// DeploymentEventList is returned by [Client.DeploymentEvents].
+type DeploymentEventList struct {
+	// OK is always true on success.
+	OK bool `json:"ok"`
+
+	// DeploymentID is the internal deployment row UUID the events belong to.
+	DeploymentID string `json:"deployment_id"`
+
+	// Events is the autopsy timeline, newest-first, capped by the server
+	// (default 50; override with the limit query the SDK sets from opts).
+	Events []DeploymentEvent `json:"events"`
+
+	// Count is the number of events returned in this response.
+	Count int `json:"count"`
 }
 
 // Resource represents a provisioned resource as returned by the resource management API.
