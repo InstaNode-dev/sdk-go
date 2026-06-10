@@ -9,6 +9,21 @@ existing callers.
 
 ### Fixed
 
+- **Provisioning + deploy calls now default to a 120 s per-request timeout
+  (reads stay at 30 s).** Provisioning is synchronous server-side: `POST /db/new`
+  (and the other `/*/new` endpoints plus `/deploy/new`) blocks while the real
+  Postgres / Redis / Mongo / NATS / bucket / pod is created. Under prod hot-pool
+  contention a *fresh* Postgres provision can exceed the old 30 s client timeout;
+  when the client gave up the server kept working and held a 60 s in-flight
+  idempotency marker, so the caller's retry hit `409 idempotency_key_in_progress`
+  instead of succeeding. The provisioning + deploy paths now run on a dedicated
+  HTTP client with no client-wide cap and a 120 s per-request context deadline,
+  comfortably outliving both the slow provision and the server's in-flight
+  window. Read calls (list/get/claim/delete/rotate) are unchanged at 30 s.
+  `WithTimeout` still overrides both (it now governs the provisioning deadline
+  too), and a tighter deadline on the caller's `context.Context` is always
+  honoured — the SDK only lengthens an open-ended context, never overrides a
+  shorter caller deadline.
 - **`Client.Claim` now sends the canonical `token` wire field instead of the
   deprecated `jwt` alias.** The api ClaimRequest doc names the Go SDK as one
   of three drift sources for the legacy `jwt` name (alongside the dashboard
