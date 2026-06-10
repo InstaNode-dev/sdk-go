@@ -108,21 +108,20 @@ type TierCapabilities struct {
 //	        t.Tier, t.StorageLimitMB["postgres"], t.Deployments)
 //	}
 func (c *Client) Capabilities(ctx context.Context) (*Capabilities, error) {
-	// Decode the body once into a generic map so we keep the complete,
-	// forward-compatible JSON (Raw), then re-decode that same map into the
-	// typed struct — one HTTP round-trip, no second request.
-	var raw map[string]any
-	if err := c.get(ctx, capabilitiesPath, &raw); err != nil {
+	// One HTTP round-trip: capture the raw JSON, decode it into the typed
+	// struct, and keep the complete forward-compatible JSON on Raw so callers
+	// can read fields newer than this SDK release. We decode the raw bytes
+	// directly into both targets — re-encoding an already-decoded map can never
+	// fail, so this avoids a dead, untestable error branch.
+	var rawMsg json.RawMessage
+	if err := c.get(ctx, capabilitiesPath, &rawMsg); err != nil {
 		return nil, fmt.Errorf("Capabilities: %w", err)
 	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("Capabilities: re-encoding response: %w", err)
-	}
 	var out Capabilities
-	if err := json.Unmarshal(b, &out); err != nil {
+	if err := json.Unmarshal(rawMsg, &out); err != nil {
 		return nil, fmt.Errorf("Capabilities: decoding response: %w", err)
 	}
-	out.Raw = raw
+	out.Raw = map[string]any{}
+	_ = json.Unmarshal(rawMsg, &out.Raw) //nolint:errcheck // best-effort; the typed decode above already validated the body
 	return &out, nil
 }

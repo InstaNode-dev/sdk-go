@@ -61,6 +61,21 @@ const capabilitiesBody = `{
   ]
 }`
 
+func TestCapabilities_DecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Valid JSON, but `tiers` is a string where the typed struct expects an
+		// array — the typed decode fails, exercising the decode-error branch.
+		_, _ = io.WriteString(w, `{"ok":true,"tiers":"not-an-array"}`)
+	}))
+	defer srv.Close()
+
+	c := New(WithBaseURL(srv.URL))
+	if _, err := c.Capabilities(context.Background()); err == nil {
+		t.Fatal("Capabilities: expected a decode error for malformed tiers, got nil")
+	}
+}
+
 func TestCapabilities_TypedDecode(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
