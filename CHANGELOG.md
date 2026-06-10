@@ -9,6 +9,29 @@ existing callers.
 
 ### Added
 
+- **Operate-verb parity with the MCP server (MCP PR #41).** Eight new methods
+  drive the full bundle lifecycle after provisioning, all on the 30 s read
+  client (none are synchronous provisions) and all surfacing `*APIError` with
+  the full agent-native envelope:
+  - `SetVaultKey` / `RotateVaultKey` (`PUT /api/v1/vault/:env/:key`,
+    `POST /api/v1/vault/:env/:key/rotate`) — write/rotate an encrypted secret;
+    every write mints a new version and the plaintext is never echoed back.
+    Reference stored secrets from deploys as `vault://<env>/<KEY>`.
+  - `UpdateDeployEnv` (`PATCH /deploy/:id/env`) — merge env vars into an
+    existing deployment; returns the merged (redacted) map plus the
+    redeploy-required note.
+  - `UpdateStackEnv` (`PATCH /stacks/:slug/env`) — same merge semantics for
+    stacks; an empty-string value deletes that key.
+  - `PresignStorage` (`POST /storage/:token/presign`) — mint a short-lived
+    (≤1 h) presigned S3 URL scoped to the resource's tenant prefix. Broker
+    mode: the token in the URL is the credential, no API key needed.
+  - `PauseResource` / `ResumeResource`
+    (`POST /api/v1/resources/:id/{pause,resume}`) — suspend a resource without
+    deleting it (Pro+ to pause; resume is never tier-gated) and bring it back
+    with the connection URL unchanged.
+  - `WakeDeployment` (`POST /deploy/:id/wake`) — explicitly wake a
+    scaled-to-zero deployment; surfaces the server's 501
+    `scale_to_zero_disabled` when the platform flag is off.
 - **`CreateStack` + `GetStack` — the anonymous deploy path.** `Deploy`
   (`POST /deploy/new`) requires an API key, so an unauthenticated agent could
   not deploy through the SDK at all. `CreateStack` wraps `POST /stacks/new`,

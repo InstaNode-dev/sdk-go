@@ -300,6 +300,27 @@ func (c *Client) postJSONWithHeaders(ctx context.Context, path string, body any,
 	return c.doWithHeaders(ctx, http.MethodPost, path, r, headers, out)
 }
 
+// putJSON executes a PUT request with a JSON-encoded body and decodes the
+// response. It runs on the read-path client (defaultTimeout) — every PUT on
+// the API surface is a quick mutation, not a synchronous provision.
+func (c *Client) putJSON(ctx context.Context, path string, body any, out any) error {
+	r, err := jsonBodyReader(body)
+	if err != nil {
+		return err
+	}
+	return c.doWithHeaders(ctx, http.MethodPut, path, r, nil, out)
+}
+
+// patchJSON executes a PATCH request with a JSON-encoded body and decodes the
+// response. Read-path timeout class, same rationale as putJSON.
+func (c *Client) patchJSON(ctx context.Context, path string, body any, out any) error {
+	r, err := jsonBodyReader(body)
+	if err != nil {
+		return err
+	}
+	return c.doWithHeaders(ctx, http.MethodPatch, path, r, nil, out)
+}
+
 // provisionJSONWithHeaders POSTs a JSON body for a synchronous provisioning
 // call. It routes through provisionClient (no client-wide Timeout cap) and
 // applies the longer provisioning deadline via the request context, so a slow

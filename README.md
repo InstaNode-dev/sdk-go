@@ -58,6 +58,8 @@ func main() {
 | `ProvisionMongoDB` | `(ctx, *ProvisionOpts) (*ProvisionResult, error)` | MongoDB database + scoped user |
 | `ProvisionQueue` | `(ctx, *ProvisionOpts) (*ProvisionResult, error)` | NATS JetStream stream |
 | `ProvisionVector` | `(ctx, *VectorOpts) (*VectorResult, error)` | pgvector-enabled Postgres (POST /vector/new) |
+| `ProvisionStorage` | `(ctx, *ProvisionOpts) (*StorageResult, error)` | S3-compatible object-storage prefix (POST /storage/new) |
+| `ProvisionWebhook` | `(ctx, *ProvisionOpts) (*WebhookResult, error)` | Webhook receiver URL (POST /webhook/new) |
 
 ### Deployment
 
@@ -67,6 +69,22 @@ func main() {
 | `CreateStack` | `(ctx, CreateStackOpts) (*Stack, error)` | Deploy a multi-service stack (POST /stacks/new — the **anonymous** deploy path; works without an API key) |
 | `GetStack` | `(ctx, slug string) (*Stack, error)` | Poll a stack's status + per-service URLs (GET /stacks/:slug) |
 | `DeploymentEvents` | `(ctx, id string, limit int) (*DeploymentEventList, error)` | Failure-autopsy timeline for a deploy (GET /api/v1/deployments/:id/events) |
+| `UpdateDeployEnv` | `(ctx, id string, env map[string]string) (*DeployEnvUpdate, error)` | Merge env vars into a deployment; redeploy to apply (PATCH /deploy/:id/env) |
+| `UpdateStackEnv` | `(ctx, slug string, env map[string]string) (*StackEnvUpdate, error)` | Merge env vars into a stack; empty value deletes the key (PATCH /stacks/:slug/env) |
+| `WakeDeployment` | `(ctx, id string) (*WakeResult, error)` | Wake a scaled-to-zero deployment (POST /deploy/:id/wake; 501 when the platform flag is off) |
+
+### Vault (requires API key, paid tier)
+
+| Method | Signature | Description |
+|---|---|---|
+| `SetVaultKey` | `(ctx, env, key, value string) (*VaultWriteResult, error)` | Store an encrypted secret as a new version (PUT /api/v1/vault/:env/:key) |
+| `RotateVaultKey` | `(ctx, env, key, value string) (*VaultWriteResult, error)` | Rotate a secret — new value, version+1, distinct audit action (POST /api/v1/vault/:env/:key/rotate) |
+
+### Storage access
+
+| Method | Signature | Description |
+|---|---|---|
+| `PresignStorage` | `(ctx, token string, PresignOpts) (*PresignResult, error)` | Mint a ≤1h presigned S3 URL (POST /storage/:token/presign — the token is the credential, no API key needed) |
 
 ### Resource Management (requires API key)
 
@@ -76,6 +94,8 @@ func main() {
 | `GetResource` | `(ctx, token string) (*Resource, error)` | Get a resource by token |
 | `DeleteResource` | `(ctx, token string) error` | Soft-delete a resource |
 | `RotateCredentials` | `(ctx, token string) (*RotateResult, error)` | New password → return updated connection URL |
+| `PauseResource` | `(ctx, token string) (*PauseResumeResult, error)` | Suspend without deleting — storage kept, connections refused (POST /api/v1/resources/:id/pause, Pro+) |
+| `ResumeResource` | `(ctx, token string) (*PauseResumeResult, error)` | Un-pause — connection URL unchanged (POST /api/v1/resources/:id/resume) |
 
 ### Account & Claiming
 
@@ -222,10 +242,11 @@ for _, e := range evs.Events {
 
 This SDK exposes a focused slice of the platform surface. The full agent API documents
 ~90+ additional endpoints across deployments management (`GET /deploy/:id`,
-`PATCH /deploy/:id/env`, `POST /deploy/:id/redeploy`, `DELETE /deploy/:id`, logs SSE),
-stack mutation (`PATCH /stacks/:slug/env`, `POST /stacks/:slug/redeploy`,
-`DELETE /stacks/:slug`), billing (`POST /api/v1/billing/checkout`,
-`/api/v1/billing/usage`), team management, env-twin / promotion, vault, audit, webhook
+`POST /deploy/:id/redeploy`, `DELETE /deploy/:id`),
+stack mutation (`POST /stacks/:slug/redeploy`,
+`DELETE /stacks/:slug`), vault reads (`GET /api/v1/vault/:env[/:key]`,
+`POST /api/v1/vault/copy`), billing (`POST /api/v1/billing/checkout`,
+`/api/v1/billing/usage`), team management, env-twin / promotion, audit, webhook
 receivers, custom domains, GitHub App connections, and more.
 
 See the [full OpenAPI](https://api.instanode.dev/openapi.json) for the canonical list.
