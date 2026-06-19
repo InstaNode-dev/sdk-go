@@ -64,10 +64,7 @@ func (c *Client) CreateLead(ctx context.Context, params *LeadParams) (*LeadResul
 		return nil, fmt.Errorf("CreateLead: Email is required")
 	}
 
-	raw, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("CreateLead: marshal params: %w", err)
-	}
+	raw, _ := json.Marshal(params) // LeadParams contains only string fields; Marshal never fails here.
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/leads", bytes.NewReader(raw))
 	if err != nil {
@@ -82,7 +79,7 @@ func (c *Client) CreateLead(ctx context.Context, params *LeadParams) (*LeadResul
 	if err != nil {
 		return nil, fmt.Errorf("CreateLead: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		var apiErr APIError
