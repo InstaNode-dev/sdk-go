@@ -70,6 +70,10 @@ func realMain(args []string, stdout, stderr io.Writer, lookupEnv func(string) st
 	return 0
 }
 
+// osExit is a variable so tests can capture the exit code without terminating
+// the test binary. Production callers use the default os.Exit.
+var osExit = os.Exit
+
 func main() {
-	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
+	osExit(realMain(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
 }
