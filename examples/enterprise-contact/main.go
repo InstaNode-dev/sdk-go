@@ -18,7 +18,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 
 	"github.com/InstaNode-dev/sdk-go/instant"
@@ -35,31 +34,42 @@ func run(ctx context.Context, c *instant.Client, params *instant.LeadParams, out
 	return nil
 }
 
-func main() {
-	email := flag.String("email", "", "Contact email address (required)")
-	name := flag.String("name", "", "Contact full name (optional)")
-	company := flag.String("company", "", "Company name (optional)")
-	useCase := flag.String("use_case", "", "Description of requirements (optional)")
-	flag.Parse()
-
-	if *email == "" {
-		fmt.Fprintln(os.Stderr, "error: -email is required")
-		flag.Usage()
-		os.Exit(1)
+// realMain is the testable entry point. It accepts args, I/O writers, and an
+// env-lookup func so tests can drive every branch without spawning a subprocess.
+func realMain(args []string, stdout, stderr io.Writer, lookupEnv func(string) string) int {
+	fs := flag.NewFlagSet("enterprise-contact", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	email := fs.String("email", "", "Contact email address (required)")
+	name := fs.String("name", "", "Contact full name (optional)")
+	company := fs.String("company", "", "Company name (optional)")
+	useCase := fs.String("use_case", "", "Description of requirements (optional)")
+	if err := fs.Parse(args); err != nil {
+		return 1
 	}
-
+	if *email == "" {
+		fmt.Fprintln(stderr, "error: -email is required")
+		return 1
+	}
 	opts := []instant.Option{}
-	if tok := os.Getenv("INSTANT_TOKEN"); tok != "" {
+	if tok := lookupEnv("INSTANT_TOKEN"); tok != "" {
 		opts = append(opts, instant.WithAPIKey(tok))
 	}
-
+	if u := lookupEnv("INSTANODE_API_URL"); u != "" {
+		opts = append(opts, instant.WithBaseURL(u))
+	}
 	c := instant.New(opts...)
 	if err := run(context.Background(), c, &instant.LeadParams{
 		Email:   *email,
 		Name:    *name,
 		Company: *company,
 		UseCase: *useCase,
-	}, os.Stdout); err != nil {
-		log.Fatalf("CreateLead: %v", err)
+	}, stdout); err != nil {
+		fmt.Fprintf(stderr, "CreateLead: %v\n", err)
+		return 1
 	}
+	return 0
+}
+
+func main() {
+	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
 }
