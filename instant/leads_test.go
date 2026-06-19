@@ -71,6 +71,71 @@ func TestCreateLead_MissingEmail(t *testing.T) {
 	}
 }
 
+func TestCreateLead_RequestBuildError(t *testing.T) {
+	// A bad base URL causes NewRequestWithContext to return an error.
+	c := New(WithBaseURL("://bad url"))
+	_, err := c.CreateLead(context.Background(), &LeadParams{Email: "a@b.com"})
+	if err == nil {
+		t.Fatal("expected error for bad base URL")
+	}
+	if !strings.Contains(err.Error(), "CreateLead: build request") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateLead_NetworkError(t *testing.T) {
+	// A closed server causes httpClient.Do to fail.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close() // close before the request arrives
+
+	c := New(WithBaseURL(url))
+	_, err := c.CreateLead(context.Background(), &LeadParams{Email: "a@b.com"})
+	if err == nil {
+		t.Fatal("expected network error")
+	}
+	if !strings.Contains(err.Error(), "CreateLead: request") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateLead_UnexpectedStatusNoCode(t *testing.T) {
+	// 500 with a body that can't be decoded as an APIError with a Code field —
+	// hits the fallback fmt.Errorf("unexpected status %d") path.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"ok":false}`) // no "error" field → Code = ""
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(WithBaseURL(srv.URL))
+	_, err := c.CreateLead(context.Background(), &LeadParams{Email: "a@b.com"})
+	if err == nil {
+		t.Fatal("expected error for 500 with no code")
+	}
+	if !strings.Contains(err.Error(), "unexpected status 500") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateLead_DecodeResponseError(t *testing.T) {
+	// 201 with invalid JSON body — hits the decode-response error path.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{not-valid-json`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(WithBaseURL(srv.URL))
+	_, err := c.CreateLead(context.Background(), &LeadParams{Email: "a@b.com"})
+	if err == nil {
+		t.Fatal("expected JSON decode error")
+	}
+	if !strings.Contains(err.Error(), "CreateLead: decode response") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestCreateLead_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

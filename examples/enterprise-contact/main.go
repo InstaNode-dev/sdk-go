@@ -17,11 +17,23 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 
 	"github.com/InstaNode-dev/sdk-go/instant"
 )
+
+// run is the testable core: creates the lead, writes output to out.
+func run(ctx context.Context, c *instant.Client, params *instant.LeadParams, out io.Writer) error {
+	lead, err := c.CreateLead(ctx, params)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Enterprise inquiry submitted.\nLead ID: %s\n", lead.ID)
+	fmt.Fprintf(out, "The instanode.dev team will follow up at %s\n", params.Email)
+	return nil
+}
 
 func main() {
 	email := flag.String("email", "", "Contact email address (required)")
@@ -42,16 +54,12 @@ func main() {
 	}
 
 	c := instant.New(opts...)
-	lead, err := c.CreateLead(context.Background(), &instant.LeadParams{
+	if err := run(context.Background(), c, &instant.LeadParams{
 		Email:   *email,
 		Name:    *name,
 		Company: *company,
 		UseCase: *useCase,
-	})
-	if err != nil {
+	}, os.Stdout); err != nil {
 		log.Fatalf("CreateLead: %v", err)
 	}
-
-	fmt.Printf("Enterprise inquiry submitted.\nLead ID: %s\n", lead.ID)
-	fmt.Println("The instanode.dev team will follow up at", *email)
 }
