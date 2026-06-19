@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -139,6 +140,22 @@ func TestRealMain_WithToken(t *testing.T) {
 	}
 	if !strings.Contains(gotAuth, "test-token-xyz") {
 		t.Errorf("Authorization header missing token; got: %q", gotAuth)
+	}
+}
+
+func TestMain_ExitIsCalled(t *testing.T) {
+	// main() calls osExit(realMain(os.Args[1:], ...)) — we replace osExit to
+	// capture the code without terminating the test binary.
+	var gotCode int
+	osExit = func(code int) { gotCode = code }
+	defer func() { osExit = os.Exit }()
+
+	// os.Args[1:] in the test binary contains -test.* flags that FlagSet
+	// doesn't recognise → realMain returns 1 → main() passes 1 to osExit.
+	main()
+
+	if gotCode != 1 {
+		t.Errorf("main() via test args: want exit code 1, got %d", gotCode)
 	}
 }
 
